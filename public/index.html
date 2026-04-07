@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGI-v1</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Auth view -->
+    <section id="auth-view" class="view">
+      <div class="auth-card">
+        <h1 class="brand">AGI-v1</h1>
+        <p class="sub">A chatbot that never forgets.</p>
+        <div class="tabs">
+          <button class="tab active" data-mode="login">Log in</button>
+          <button class="tab" data-mode="register">Register</button>
+        </div>
+        <form id="auth-form" autocomplete="off">
+          <label>Username<input id="username" type="text" autocomplete="username" required minlength="3" /></label>
+          <label>Password<input id="password" type="password" autocomplete="current-password" required minlength="6" /></label>
+          <label id="display-name-label" class="hidden">Display name (optional)<input id="display-name" type="text" /></label>
+          <button class="primary" type="submit">Log in</button>
+          <p id="auth-error" class="error"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- Chat view -->
+    <section id="chat-view" class="view hidden">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-row">
+            <span class="brand">AGI-v1</span>
+            <button id="new-chat" title="New chat">+</button>
+          </div>
+          <div id="who" class="who"></div>
+        </div>
+        <div class="tab-row">
+          <button class="side-tab active" data-tab="conversations">Chats</button>
+          <button class="side-tab" data-tab="people">People</button>
+          <button class="side-tab" data-tab="memories">Memories</button>
+        </div>
+        <div id="side-conversations" class="side-panel"></div>
+        <div id="side-people" class="side-panel hidden"></div>
+        <div id="side-memories" class="side-panel hidden"></div>
+        <div class="sidebar-footer">
+          <button id="logout">Log out</button>
+        </div>
+      </aside>
+      <main class="chat">
+        <div id="messages" class="messages"></div>
+        <form id="chat-form" class="composer">
+          <textarea id="chat-input" placeholder="Say something. It will remember." rows="2"></textarea>
+          <button class="primary" type="submit">Send</button>
+        </form>
+      </main>
+    </section>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

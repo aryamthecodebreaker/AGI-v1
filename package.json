@@ -1,0 +1,52 @@
+{
+  "name": "agi-v1",
+  "version": "0.1.0",
+  "description": "A from-scratch chatbot with persistent cross-chat memory. Dual-brain architecture: STORAGE (SQLite+FTS5+embeddings) and MAIN (orchestrator). Multi-user. Local LLM (transformers.js) + a real from-scratch transformer.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "warm": "tsx scripts/warm-models.ts",
+    "seed": "tsx scripts/seed-demo-user.ts",
+    "verify": "tsx scripts/verify-memory.ts",
+    "train:scratch": "tsx scripts/train-scratch.ts",
+    "check:native": "node -e \"require('better-sqlite3'); console.log('better-sqlite3 OK on Node',process.version)\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "Aryam",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aryamthecodebreaker/AGI-v1.git"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.1",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.3",
+    "@huggingface/transformers": "^3.3.1",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.0.9",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}
