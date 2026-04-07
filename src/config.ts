@@ -10,7 +10,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16).optional(),
   DATA_DIR: z.string().default('./data'),
   LLM_BACKEND: z.enum(['transformers', 'scratch', 'gemini']).default('gemini'),
-  LLM_MODEL_ID: z.string().default('gemini-2.5-flash-lite'),
+  LLM_MODEL_ID: z.string().default('gemini-2.5-flash'),
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
   GEMINI_API_KEY: z.string().optional(),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),

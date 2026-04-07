@@ -74,7 +74,41 @@ Output: []`;
 // Empty — examples are now inside the system prompt.
 export const ENTITY_EXTRACTION_EXAMPLES: { user: string; assistant: string }[] = [];
 
-// ---------- Fact extraction ----------
+// ---------- Unified memory extraction (people + facts in ONE call) ----------
+// This replaces the two-call entity + fact flow so every user turn only
+// incurs 2 LLM calls total (streaming reply + this extractor) instead of 3.
+// Important on free-tier APIs (Gemini) where RPM is tight.
+export const MEMORY_EXTRACTION_SYSTEM = `You extract durable memory from a short user/assistant exchange. Read the USER message carefully and return ONE JSON object, nothing else.
+
+Output format (exactly this shape):
+{
+  "people": [{"name": "<exact name>", "relationship": "<friend|family|coworker|acquaintance|unknown>"}],
+  "facts":  [{"fact": "<one atomic fact as a full sentence>", "people": ["<name>"]}]
+}
+
+People rules:
+- Include only real named HUMANS that appear in the USER message. Pets, brands, fictional characters = skip.
+- Skip pronouns, role nouns ("my doctor"), and the user themselves.
+- If none, use [].
+
+Fact rules:
+- Extract EVERY distinct durable fact. One message usually contains multiple — emit one entry per fact.
+- Use names, dates, numbers, and words that appear LITERALLY in the USER message. Do not reformat (do not turn "March 12" into "3/12").
+- Phrase each fact as a complete sentence. Use the person's name if the fact is about them; otherwise start with "The user".
+- Skip small talk and anything only the assistant said that the user did not confirm.
+- If none, use [].
+
+Never copy values from the example below. Only extract from the exchange you are given.
+
+Example (illustrates FORMAT only — do not reuse these values):
+Exchange:
+USER: I grabbed coffee with Priya today. Her birthday is July 4.
+ASSISTANT: Fun!
+
+Output:
+{"people":[{"name":"Priya","relationship":"friend"}],"facts":[{"fact":"The user grabbed coffee with Priya.","people":["Priya"]},{"fact":"Priya's birthday is July 4.","people":["Priya"]}]}`;
+
+// ---------- Fact extraction (legacy — kept for tests/back-compat) ----------
 export const FACT_EXTRACTION_SYSTEM = `You extract EVERY durable personal fact from a short user/assistant exchange. Output ONLY a JSON array, nothing else.
 
 Output format: [{"fact":"<one atomic fact>","people":["<person name>"]}, ...]

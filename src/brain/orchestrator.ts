@@ -159,37 +159,22 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
         });
       }
 
-      // 6. Fire-and-forget: entity + fact extraction. These run off the hot
-      //    path so streaming latency isn't affected. Errors are logged but
-      //    never surface to the user.
+      // 6. Fire-and-forget: unified people + facts extraction. One LLM call
+      //    instead of two — critical for Gemini's free-tier RPM limits.
+      //    Runs off the hot path so streaming latency isn't affected.
       trackBackground(
         (async () => {
           try {
-            const { extractAndStorePeople } = await import('./entityExtraction.js');
-            await extractAndStorePeople(storage, llm, {
+            const { extractAndStoreMemory } = await import('./memoryExtraction.js');
+            await extractAndStoreMemory(storage, llm, {
               userId,
               conversationId,
               sourceMessageId: userMsg.id,
-              text: content,
-            });
-          } catch (err) {
-            logger.warn({ err }, 'entity extraction failed');
-          }
-        })(),
-      );
-      trackBackground(
-        (async () => {
-          try {
-            const { extractAndStoreFacts } = await import('./factExtraction.js');
-            await extractAndStoreFacts(storage, llm, {
-              userId,
-              conversationId,
               userMessage: content,
               assistantMessage: assistantText,
-              sourceMessageId: userMsg.id,
             });
           } catch (err) {
-            logger.warn({ err }, 'fact extraction failed');
+            logger.warn({ err }, 'memory extraction failed');
           }
         })(),
       );
