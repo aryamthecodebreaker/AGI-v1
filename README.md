@@ -1,3 +1,15 @@
+---
+title: AGI v1
+emoji: 🧠
+colorFrom: purple
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: A chatbot that never forgets — dual-brain persistent memory
+---
+
 # AGI-v1
 
 A chatbot that **never forgets**. Every message from every chat is stored, indexed, and retrieved on demand — so the bot remembers names, dates, preferences, and context across conversations forever.
