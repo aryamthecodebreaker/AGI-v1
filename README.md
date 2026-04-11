@@ -14,7 +14,7 @@ short_description: A chatbot that never forgets — dual-brain persistent memory
 
 A chatbot that **never forgets**. Every message from every chat is stored, indexed, and retrieved on demand — so the bot remembers names, dates, preferences, and context across conversations forever.
 
-> **Live demo:** _deploy in progress — link will be added here once it's live._
+> **Live demo:** https://aryam123-agi-v1.hf.space
 >
 > Source: [github.com/aryamthecodebreaker/AGI-v1](https://github.com/aryamthecodebreaker/AGI-v1)
 
