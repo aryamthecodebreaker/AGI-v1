@@ -7,8 +7,8 @@ import { AUTH_COOKIE, requireAuth } from '../../auth/middleware.js';
 import { Errors } from '../../util/errors.js';
 
 const credsSchema = z.object({
-  username: z.string().min(3).max(40).regex(/^[a-zA-Z0-9_.-]+$/),
-  password: z.string().min(6).max(200),
+  username: z.string().min(3).max(40).regex(/^[a-zA-Z0-9_.-]+$/, 'Username can only contain letters, numbers, underscores, dots, and hyphens'),
+  password: z.string().min(10).max(200).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9])/, 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
   displayName: z.string().max(80).optional(),
 });
 
@@ -18,10 +18,18 @@ const COOKIE_OPTS = {
   path: '/',
   maxAge: 60 * 60 * 24 * 30, // 30 days
   secure: false, // local dev; flip to true behind HTTPS
-};
+} as const;
 
 export async function authRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
-  app.post('/api/auth/register', async (req, reply) => {
+  // Stricter rate limit for auth endpoints
+  app.post('/api/auth/register', {
+    config: {
+      rateLimit: {
+        max: 3,
+        timeWindow: 60000, // 3 requests per minute
+      },
+    },
+  }, async (req, reply) => {
     const parsed = credsSchema.safeParse(req.body);
     if (!parsed.success) throw Errors.badRequest('Invalid credentials', parsed.error.flatten());
     const { username, password, displayName } = parsed.data;
@@ -35,7 +43,14 @@ export async function authRoutes(app: FastifyInstance, storage: Storage): Promis
     return { id: user.id, username: user.username, displayName: user.display_name };
   });
 
-  app.post('/api/auth/login', async (req, reply) => {
+  app.post('/api/auth/login', {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: 60000, // 5 requests per minute
+      },
+    },
+  }, async (req, reply) => {
     const schema = z.object({ username: z.string(), password: z.string() });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) throw Errors.badRequest('Invalid credentials');
