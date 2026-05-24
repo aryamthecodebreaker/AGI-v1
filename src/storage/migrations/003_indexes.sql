@@ -9,3 +9,6 @@ CREATE INDEX IF NOT EXISTS idx_people_user_lastmention  ON people(user_id, last_
 CREATE INDEX IF NOT EXISTS idx_conversations_user_upd   ON conversations(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_user            ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_person_memories_memory   ON person_memories(memory_id);
+
+-- Composite index for efficient vector search (user + created_at for recent-first scan)
+CREATE INDEX IF NOT EXISTS idx_memories_user_created_desc ON memories(user_id, created_at DESC);

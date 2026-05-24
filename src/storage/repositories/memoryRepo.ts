@@ -122,18 +122,12 @@ export function createMemoryRepo(db: DbType) {
     touchAccessed(id: string): void {
       touchAccessedStmt.run(now(), id);
     },
-    /**
-     * Vector-space cosine similarity search.
-     *
-     * Strategy: pull up to `scanLimit` most-recent rows for the user, sort by cosine similarity to the query,
-     * return top-k. For tens of thousands of rows this is a few ms; later we can switch to a native vector
-     * extension if needed.
-     */
+    /** Vector-space cosine similarity search with bounded scan. */
     vectorSearch(
       userId: string,
       queryEmbedding: Float32Array,
       k: number,
-      scanLimit = 50_000,
+      scanLimit = 5000, // Reduced from 50K for better performance
     ): Array<{ memory: Memory; score: number }> {
       const rows = allByUserStmt.all(userId, scanLimit) as MemoryRow[];
       const scored: Array<{ memory: Memory; score: number }> = [];

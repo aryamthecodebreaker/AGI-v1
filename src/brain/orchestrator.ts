@@ -34,13 +34,31 @@ export interface OrchestratorEvent {
   meta?: Record<string, unknown>;
 }
 
-/** Background task handles — exposed for tests that need to flush. */
+/** Background task handle — exposed for tests that need to flush. */
 const backgroundTasks = new Set<Promise<void>>();
+const MAX_BACKGROUND_TASKS = 50;
+
 export async function flushBackgroundTasks(): Promise<void> {
   const pending = Array.from(backgroundTasks);
   await Promise.allSettled(pending);
 }
+
 function trackBackground(p: Promise<void>): void {
+  // Prune completed tasks before adding new one
+  const completed = Array.from(backgroundTasks).filter((t) => {
+    const status = (t as PromiseWithResolvers<void> & { status?: string }).status;
+    return status === 'fulfilled' || status === 'rejected';
+  });
+  completed.forEach((t) => backgroundTasks.delete(t));
+  
+  // If too many pending tasks, wait for some to complete
+  if (backgroundTasks.size >= MAX_BACKGROUND_TASKS) {
+    const toWait = Array.from(backgroundTasks).slice(0, MAX_BACKGROUND_TASKS / 2);
+    Promise.allSettled(toWait).then(() => {
+      toWait.forEach((t) => backgroundTasks.delete(t));
+    });
+  }
+  
   backgroundTasks.add(p);
   p.finally(() => backgroundTasks.delete(p));
 }

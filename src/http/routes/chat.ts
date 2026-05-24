@@ -19,7 +19,15 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
   const auth = requireAuth(storage);
   const orchestrator = createOrchestrator(storage);
 
-  app.post('/api/chat', { preHandler: auth }, async (req, reply) => {
+  app.post('/api/chat', { 
+    preHandler: auth,
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: 60000, // 30 requests per minute for chat
+      },
+    },
+  }, async (req, reply) => {
     const body = chatSchema.parse(req.body);
     const user = req.user!;
 

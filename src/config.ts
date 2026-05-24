@@ -7,18 +7,21 @@ import crypto from 'node:crypto';
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('127.0.0.1'),
-  JWT_SECRET: z.string().min(16).optional(),
+  JWT_SECRET: z.string().min(32).optional(),
   DATA_DIR: z.string().default('./data'),
   LLM_BACKEND: z.enum(['transformers', 'scratch', 'gemini']).default('gemini'),
   LLM_MODEL_ID: z.string().default('gemini-2.5-flash'),
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
   GEMINI_API_KEY: z.string().optional(),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 
 function ensureJwtSecret(): string {
   const existing = process.env.JWT_SECRET;
-  if (existing && existing.length >= 16) return existing;
+  if (existing && existing.length >= 32) return existing;
 
   // Generate a secret and persist it to .env so restarts keep the same value.
   const generated = crypto.randomBytes(48).toString('hex');
@@ -75,6 +78,9 @@ export const config = {
   embedModelId: parsed.EMBED_MODEL_ID,
   geminiApiKey: parsed.GEMINI_API_KEY,
   logLevel: parsed.LOG_LEVEL,
+  rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
+  rateLimitMaxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
+  nodeEnv: parsed.NODE_ENV,
 } as const;
 
 export type Config = typeof config;
