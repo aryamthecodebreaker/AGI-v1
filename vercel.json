@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build && mkdir -p vercel_dist && cp -r public vercel_dist/ && cp -r dist vercel_dist/",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": null,
+  "outputDirectory": "vercel_dist",
+  "regions": ["iad1"],
+  "env": {
+    "NODE_ENV": "production",
+    "LLM_BACKEND": "gemini"
+  }
+}

@@ -6,9 +6,9 @@ import crypto from 'node:crypto';
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
-  HOST: z.string().default('127.0.0.1'),
+  HOST: z.string().default('0.0.0.0'),
   JWT_SECRET: z.string().min(32).optional(),
-  DATA_DIR: z.string().default('./data'),
+  DATA_DIR: z.string().default('/tmp/agi-data'),
   LLM_BACKEND: z.enum(['transformers', 'scratch', 'gemini']).default('gemini'),
   LLM_MODEL_ID: z.string().default('gemini-2.5-flash'),
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
@@ -23,29 +23,39 @@ function ensureJwtSecret(): string {
   const existing = process.env.JWT_SECRET;
   if (existing && existing.length >= 32) return existing;
 
+  // In production environments without VERCEL flag, require JWT_SECRET to be set
+  if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+    throw new Error('JWT_SECRET must be set in production environment via environment variable');
+  }
+
   // Generate a secret and persist it to .env so restarts keep the same value.
   const generated = crypto.randomBytes(48).toString('hex');
-  const envPath = path.resolve(process.cwd(), '.env');
-  let existingFile = '';
-  try {
-    existingFile = fs.readFileSync(envPath, 'utf8');
-  } catch {
-    /* no .env yet */
+  
+  // Only write to .env in non-serverless environments
+  if (!process.env.VERCEL && process.env.NODE_ENV !== 'production') {
+    const envPath = path.resolve(process.cwd(), '.env');
+    let existingFile = '';
+    try {
+      existingFile = fs.readFileSync(envPath, 'utf8');
+    } catch {
+      /* no .env yet */
+    }
+    const line = `JWT_SECRET=${generated}`;
+    const updated = existingFile.match(/^JWT_SECRET=.*/m)
+      ? existingFile.replace(/^JWT_SECRET=.*/m, line)
+      : (existingFile ? existingFile.replace(/\s*$/, '') + '\n' : '') + line + '\n';
+    try {
+      fs.writeFileSync(envPath, updated, 'utf8');
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[config] No JWT_SECRET found — generated one and wrote it to .env. Restart so sessions are stable.',
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[config] Could not persist JWT_SECRET to .env:', (e as Error).message);
+    }
   }
-  const line = `JWT_SECRET=${generated}`;
-  const updated = existingFile.match(/^JWT_SECRET=.*/m)
-    ? existingFile.replace(/^JWT_SECRET=.*/m, line)
-    : (existingFile ? existingFile.replace(/\s*$/, '') + '\n' : '') + line + '\n';
-  try {
-    fs.writeFileSync(envPath, updated, 'utf8');
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[config] No JWT_SECRET found — generated one and wrote it to .env. Restart so sessions are stable.',
-    );
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('[config] Could not persist JWT_SECRET to .env:', (e as Error).message);
-  }
+  
   process.env.JWT_SECRET = generated;
   return generated;
 }

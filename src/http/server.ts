@@ -12,7 +12,6 @@ import { initStorage, type Storage } from '../storage/index.js';
 import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { chatRoutes } from './routes/chat.js';
-import { peopleRoutes } from './routes/people.js';
 import { memoryRoutes } from './routes/memories.js';
 import { toHttpError } from '../util/errors.js';
 
@@ -24,6 +23,7 @@ function resolvePublicDir(): string {
   const candidates = [
     path.resolve(__dirname, '..', '..', 'public'),
     path.resolve(process.cwd(), 'public'),
+    path.resolve(__dirname, '..', 'public'),
   ];
   for (const c of candidates) {
     try { if (fs.existsSync(c)) return c; } catch { /* ignore */ }
@@ -64,7 +64,6 @@ export async function buildServer(storageOverride?: Storage): Promise<FastifyIns
   await authRoutes(app, storage);
   await conversationRoutes(app, storage);
   await chatRoutes(app, storage);
-  await peopleRoutes(app, storage);
   await memoryRoutes(app, storage);
 
   // Unified error handler
