@@ -47,7 +47,6 @@ async function showChat() {
   $('#chat-view').classList.remove('hidden');
   $('#who').textContent = `@${state.user.username}`;
   await refreshConversations();
-  await refreshPeople();
   await refreshMemories();
 }
 
@@ -91,9 +90,7 @@ $$('.side-tab').forEach((btn) => {
     $$('.side-tab').forEach((b) => b.classList.toggle('active', b === btn));
     const tab = btn.dataset.tab;
     $('#side-conversations').classList.toggle('hidden', tab !== 'conversations');
-    $('#side-people').classList.toggle('hidden', tab !== 'people');
     $('#side-memories').classList.toggle('hidden', tab !== 'memories');
-    if (tab === 'people') refreshPeople();
     if (tab === 'memories') refreshMemories();
   });
 });
@@ -197,7 +194,6 @@ $('#chat-form').addEventListener('submit', async (e) => {
       }
     }
     assistant.classList.remove('thinking');
-    await refreshPeople();
     await refreshMemories();
     await refreshConversations();
   } catch (err) {
@@ -213,25 +209,7 @@ $('#chat-input').addEventListener('keydown', (e) => {
   }
 });
 
-// ---------- People & Memories (populated by later steps) ----------
-async function refreshPeople() {
-  try {
-    const people = await api('/api/people');
-    const list = $('#side-people');
-    list.innerHTML = '';
-    if (!people || people.length === 0) {
-      list.innerHTML = '<div class="empty-state">No people tracked yet.</div>';
-      return;
-    }
-    for (const p of people) {
-      const btn = document.createElement('button');
-      btn.className = 'person-item';
-      btn.innerHTML = `${p.displayName}<span class="rel">${p.relationship || 'unknown'} · ${p.mentionCount} mentions</span>`;
-      list.appendChild(btn);
-    }
-  } catch { /* people route not wired yet */ }
-}
-
+// Go
 async function refreshMemories() {
   try {
     const memories = await api('/api/memories?limit=40');
@@ -250,5 +228,4 @@ async function refreshMemories() {
   } catch { /* memories route not wired yet */ }
 }
 
-// Go
 tryAutoLogin();
