@@ -4,11 +4,12 @@ import type { Storage } from '../../storage/index.js';
 import { hashPassword, verifyPassword } from '../../auth/passwords.js';
 import { signToken } from '../../auth/tokens.js';
 import { AUTH_COOKIE, requireAuth } from '../../auth/middleware.js';
+import { config } from '../../config.js';
 import { Errors } from '../../util/errors.js';
 
 const credsSchema = z.object({
-  username: z.string().min(3).max(40).regex(/^[a-zA-Z0-9_.-]+$/, 'Username can only contain letters, numbers, underscores, dots, and hyphens'),
-  password: z.string().min(10).max(200).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9])/, 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+  username: z.string().min(3, 'Username must be at least 3 characters').max(40).regex(/^[a-zA-Z0-9_.-]+$/, 'Username can only contain letters, numbers, underscores, dots, and hyphens'),
+  password: z.string().min(10, 'Password must be at least 10 characters').max(200).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9])/, 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
   displayName: z.string().max(80).optional(),
 });
 
@@ -17,7 +18,7 @@ const COOKIE_OPTS = {
   sameSite: 'lax' as const,
   path: '/',
   maxAge: 60 * 60 * 24 * 30, // 30 days
-  secure: false, // local dev; flip to true behind HTTPS
+  secure: config.nodeEnv === 'production',
 } as const;
 
 export async function authRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
@@ -31,7 +32,10 @@ export async function authRoutes(app: FastifyInstance, storage: Storage): Promis
     },
   }, async (req, reply) => {
     const parsed = credsSchema.safeParse(req.body);
-    if (!parsed.success) throw Errors.badRequest('Invalid credentials', parsed.error.flatten());
+    if (!parsed.success) {
+      const message = parsed.error.issues[0]?.message ?? 'Invalid signup details';
+      throw Errors.badRequest(message, parsed.error.flatten());
+    }
     const { username, password, displayName } = parsed.data;
 
     if (storage.users.getByUsername(username)) throw Errors.conflict('Username already exists');

@@ -28,6 +28,24 @@ export function toHttpError(err: unknown): { status: number; body: Record<string
       body: { error: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) },
     };
   }
+
+  // Fastify plugins such as @fastify/rate-limit can raise plain objects rather
+  // than AppError instances. Preserve their safe 4xx response instead of
+  // accidentally turning a client error into a 500.
+  if (typeof err === 'object' && err !== null) {
+    const candidate = err as { statusCode?: unknown; error?: unknown; code?: unknown; message?: unknown };
+    const status = candidate.statusCode;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      const code = typeof candidate.error === 'string'
+        ? candidate.error
+        : typeof candidate.code === 'string'
+          ? candidate.code
+          : 'BAD_REQUEST';
+      const message = typeof candidate.message === 'string' ? candidate.message : 'Request failed';
+      return { status, body: { error: code, message } };
+    }
+  }
+
   const msg = err instanceof Error ? err.message : 'Unknown error';
   return { status: 500, body: { error: 'INTERNAL', message: msg } };
 }

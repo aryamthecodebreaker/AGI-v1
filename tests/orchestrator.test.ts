@@ -1,11 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { LlmBackend } from '../src/llm/types.js';
 import { storageFromDb } from '../src/storage/index.js';
 import { createOrchestrator, flushBackgroundTasks } from '../src/brain/orchestrator.js';
-import { getLlmBackend } from '../src/llm/registry.js';
+
+vi.mock('../src/llm/embeddings.js', () => ({
+  embed: vi.fn(async () => new Float32Array(384)),
+}));
+
+function mockBackend(chunks: string[], onChunk?: (chunk: string) => void): LlmBackend {
+  return {
+    name: 'test:mock',
+    ready: async () => {},
+    generate: async function* () {
+      for (const chunk of chunks) {
+        onChunk?.(chunk);
+        yield chunk;
+      }
+    },
+    generateOnce: async () => '{}',
+  };
+}
 
 describe('Brain orchestrator', () => {
   let tmpPath: string;
@@ -33,17 +51,7 @@ describe('Brain orchestrator', () => {
     const user = storage.users.create({ username: 'orchtest', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'Test chat');
     
-    const orchestrator = createOrchestrator(storage);
-    
-    // Mock LLM backend for testing
-    const mockBackend = getLlmBackend();
-    mockBackend.ready = async () => {};
-    mockBackend.generate = async function* () {
-      yield 'Hello';
-      yield ' there';
-    };
-    
-    const orchestratorWithMock = createOrchestrator(storage, mockBackend);
+    const orchestratorWithMock = createOrchestrator(storage, mockBackend(['Hello', ' there']));
     
     const events: string[] = [];
     for await (const event of orchestratorWithMock.handleUserMessage({
@@ -66,13 +74,7 @@ describe('Brain orchestrator', () => {
     const user = storage.users.create({ username: 'titletest', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'New chat');
     
-    const mockBackend = getLlmBackend();
-    mockBackend.ready = async () => {};
-    mockBackend.generate = async function* () {
-      yield 'Response';
-    };
-    
-    const orchestrator = createOrchestrator(storage, mockBackend);
+    const orchestrator = createOrchestrator(storage, mockBackend(['Response']));
     
     for await (const _ of orchestrator.handleUserMessage({
       userId: user.id,
@@ -91,31 +93,17 @@ describe('Brain orchestrator', () => {
     
     const abortController = new AbortController();
     
-    const mockBackend = getLlmBackend();
-    mockBackend.ready = async () => {};
-    mockBackend.generate = async function* () {
-      yield 'Start';
-      abortController.abort();
-      yield 'Should not reach';
-    };
-    
-    const orchestrator = createOrchestrator(storage, mockBackend);
+    const backend = mockBackend(['Start'], () => abortController.abort());
+    const orchestrator = createOrchestrator(storage, backend);
     
     const events: string[] = [];
-    let errorOccurred = false;
-    
-    try {
-      for await (const event of orchestrator.handleUserMessage({
-        userId: user.id,
-        conversationId: conv.id,
-        content: 'Test abort',
-        signal: abortController.signal,
-      })) {
-        if (event.type === 'token') events.push(event.data!);
-        if (event.type === 'error') errorOccurred = true;
-      }
-    } catch {
-      errorOccurred = true;
+    for await (const event of orchestrator.handleUserMessage({
+      userId: user.id,
+      conversationId: conv.id,
+      content: 'Test abort',
+      signal: abortController.signal,
+    })) {
+      if (event.type === 'token') events.push(event.data!);
     }
     
     expect(events).toContain('Start');
@@ -126,13 +114,7 @@ describe('Brain orchestrator', () => {
     const user = storage.users.create({ username: 'metatest', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'Meta test');
     
-    const mockBackend = getLlmBackend();
-    mockBackend.ready = async () => {};
-    mockBackend.generate = async function* () {
-      yield 'OK';
-    };
-    
-    const orchestrator = createOrchestrator(storage, mockBackend);
+    const orchestrator = createOrchestrator(storage, mockBackend(['OK']));
     
     let metaEvent: { memoriesUsed: number; peopleInContext: number; recentTurns: number } | null = null;
     

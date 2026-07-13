@@ -1,7 +1,7 @@
 // Chooses the active LLM backend based on config.llmBackend.
 // The MAIN brain only ever imports getLlmBackend() from here — never a
 // concrete backend — so swapping is one env var:
-//   LLM_BACKEND=gemini|transformers|scratch
+//   LLM_BACKEND=gemini|openrouter|transformers|scratch
 //
 // Gemini is the default for deploys; transformers is local-only (needs ~500MB
 // of model weights on disk); scratch is the from-scratch trained model.
@@ -9,6 +9,7 @@
 import { config } from '../config.js';
 import type { LlmBackend } from './types.js';
 import { getGeminiBackend } from './geminiBackend.js';
+import { getOpenRouterBackend } from './openRouterBackend.js';
 
 let cached: LlmBackend | null = null;
 
@@ -17,6 +18,9 @@ export function getLlmBackend(): LlmBackend {
   switch (config.llmBackend) {
     case 'gemini':
       cached = getGeminiBackend();
+      return cached;
+    case 'openrouter':
+      cached = getOpenRouterBackend();
       return cached;
     case 'transformers': {
       // Lazy-import so serverless builds don't try to bundle the heavy
