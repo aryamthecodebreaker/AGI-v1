@@ -3,9 +3,11 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import jwt from 'jsonwebtoken';
 import { storageFromDb } from '../src/storage/index.js';
-import { hashPassword } from '../src/auth/passwords.js';
+import { hashPassword, verifyPassword } from '../src/auth/passwords.js';
 import { signToken, verifyToken } from '../src/auth/tokens.js';
+import { config } from '../src/config.js';
 
 describe('Auth module', () => {
   let tmpPath: string;
@@ -38,7 +40,7 @@ describe('Auth module', () => {
     it('rejects wrong password', async () => {
       const password = 'TestPassword123!';
       const hash = await hashPassword(password);
-      expect(await hashPassword('wrong', hash)).toBe(false);
+      expect(await verifyPassword('wrong', hash)).toBe(false);
     });
   });
 
@@ -60,7 +62,10 @@ describe('Auth module', () => {
 
     it('rejects expired token', () => {
       const userId = 'u_test123';
-      const token = signToken(userId, -1); // Expired 1 second ago
+      const token = jwt.sign({ sub: userId }, config.jwtSecret, {
+        expiresIn: -1,
+        algorithm: 'HS256',
+      });
       expect(verifyToken(token)).toBeNull();
     });
   });
