@@ -22,7 +22,8 @@
         </div>
         <form id="auth-form" autocomplete="off">
           <label>Username<input id="username" type="text" autocomplete="username" required minlength="3" /></label>
-          <label>Password<input id="password" type="password" autocomplete="current-password" required minlength="6" /></label>
+          <label>Password<input id="password" type="password" autocomplete="current-password" required /></label>
+          <p id="password-help" class="field-help hidden">Use at least 10 characters with uppercase, lowercase, a number, and a symbol.</p>
           <label id="display-name-label" class="hidden">Display name (optional)<input id="display-name" type="text" /></label>
           <button class="primary" type="submit">Log in</button>
           <p id="auth-error" class="error"></p>

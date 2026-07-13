@@ -46,7 +46,7 @@ export async function flushBackgroundTasks(): Promise<void> {
 function trackBackground(p: Promise<void>): void {
   // Prune completed tasks before adding new one
   const completed = Array.from(backgroundTasks).filter((t) => {
-    const status = (t as PromiseWithResolvers<void> & { status?: string }).status;
+    const status = (t as Promise<void> & { status?: string }).status;
     return status === 'fulfilled' || status === 'rejected';
   });
   completed.forEach((t) => backgroundTasks.delete(t));

@@ -35,10 +35,12 @@ export async function buildServer(storageOverride?: Storage): Promise<FastifyIns
   const storage = storageOverride ?? initStorage();
 
   const app = Fastify({
-    logger: {
-      level: config.logLevel,
-      transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l', ignore: 'pid,hostname' } },
-    },
+    logger: config.nodeEnv === 'development'
+      ? {
+          level: config.logLevel,
+          transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l', ignore: 'pid,hostname' } },
+        }
+      : { level: config.logLevel },
     trustProxy: true,
   });
 

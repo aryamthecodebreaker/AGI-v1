@@ -100,6 +100,7 @@ button.primary:hover {
 }
 button.primary:active { transform: translateY(0); }
 .error { color: var(--danger-light); font-size: 13px; min-height: 18px; margin-top: 16px; font-weight: 500; }
+.field-help { color: var(--text-muted); font-size: 12px; line-height: 1.45; margin: -8px 0 16px; }
 
 /* ---------- Chat view ---------- */
 #chat-view { display: grid; grid-template-columns: 300px 1fr; }

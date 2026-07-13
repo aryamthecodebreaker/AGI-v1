@@ -17,7 +17,6 @@ const chatSchema = z.object({
 
 export async function chatRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
   const auth = requireAuth(storage);
-  const orchestrator = createOrchestrator(storage);
 
   app.post('/api/chat', { 
     preHandler: auth,
@@ -36,6 +35,8 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     if (!conv || conv.user_id !== user.id) {
       return reply.status(404).send({ error: 'conversation not found' });
     }
+
+    const orchestrator = createOrchestrator(storage);
 
     // Open an SSE stream.
     const sse = startSse(reply);

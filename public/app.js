@@ -50,12 +50,29 @@ async function showChat() {
   await refreshMemories();
 }
 
+function syncAuthMode() {
+  const registering = state.authMode === 'register';
+  const password = $('#password');
+  $('#auth-form button.primary').textContent = registering ? 'Create account' : 'Log in';
+  $('#display-name-label').classList.toggle('hidden', !registering);
+  $('#password-help').classList.toggle('hidden', !registering);
+  password.autocomplete = registering ? 'new-password' : 'current-password';
+  if (registering) {
+    password.minLength = 10;
+    password.pattern = '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z0-9]).{10,200}$';
+    password.title = 'Use at least 10 characters with uppercase, lowercase, a number, and a symbol.';
+  } else {
+    password.removeAttribute('minlength');
+    password.removeAttribute('pattern');
+    password.removeAttribute('title');
+  }
+}
+
 $$('.tab').forEach((btn) => {
   btn.addEventListener('click', () => {
     state.authMode = btn.dataset.mode;
     $$('.tab').forEach((b) => b.classList.toggle('active', b === btn));
-    $('#auth-form button.primary').textContent = state.authMode === 'login' ? 'Log in' : 'Create account';
-    $('#display-name-label').classList.toggle('hidden', state.authMode !== 'register');
+    syncAuthMode();
   });
 });
 
