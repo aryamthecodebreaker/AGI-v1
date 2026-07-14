@@ -74,6 +74,41 @@ describe('Brain orchestrator', () => {
     expect(vi.mocked(waitUntil).mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
+  it('does not emit done until durable memory extraction finishes', async () => {
+    const user = storage.users.create({ username: 'memoryfinal', passwordHash: 'h' });
+    const conv = storage.conversations.create(user.id, 'Memory finalization test');
+    let releaseExtraction!: (value: string) => void;
+    let markExtractionStarted!: () => void;
+    const extractionStarted = new Promise<void>((resolve) => {
+      markExtractionStarted = resolve;
+    });
+    const extractionResult = new Promise<string>((resolve) => {
+      releaseExtraction = resolve;
+    });
+    const backend = mockBackend(['Reply text']);
+    backend.generateOnce = async () => {
+      markExtractionStarted();
+      return extractionResult;
+    };
+    const orchestrator = createOrchestrator(storage, backend);
+    let doneSeen = false;
+    const consume = (async () => {
+      for await (const event of orchestrator.handleUserMessage({
+        userId: user.id,
+        conversationId: conv.id,
+        content: 'My favorite color is ultramarine.',
+      })) {
+        if (event.type === 'done') doneSeen = true;
+      }
+    })();
+
+    await extractionStarted;
+    expect(doneSeen).toBe(false);
+    releaseExtraction('{"people":[],"facts":[]}');
+    await consume;
+    expect(doneSeen).toBe(true);
+  });
+
   it('creates conversation and persists user message', async () => {
     const user = storage.users.create({ username: 'orchtest', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'Test chat');
