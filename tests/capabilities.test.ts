@@ -1,7 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
+import jwt from 'jsonwebtoken';
 import { describe, expect, it } from 'vitest';
 import { parseCapabilityCommand } from '../src/capabilities/commands.js';
 import { assertCapabilityAdmin } from '../src/capabilities/config.js';
 import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
+import { createGitHubAppJwt } from '../src/capabilities/github.js';
 import type { ChatMessage, LlmBackend } from '../src/llm/types.js';
 
 const safeDraft = {
@@ -51,6 +54,25 @@ describe('capability configuration', () => {
       if (previousAdmins === undefined) delete process.env.CAPABILITY_ADMIN_USER_IDS;
       else process.env.CAPABILITY_ADMIN_USER_IDS = previousAdmins;
     }
+  });
+});
+
+describe('GitHub App authentication', () => {
+  it('keeps the required issued-at claim in the signed assertion', () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const now = Math.floor(Date.now() / 1000);
+    const token = createGitHubAppJwt('4293131', privateKey.export({
+      type: 'pkcs8',
+      format: 'pem',
+    }).toString());
+    const payload = jwt.decode(token);
+
+    expect(payload).toMatchObject({ iss: '4293131' });
+    expect(typeof payload).toBe('object');
+    expect(payload && typeof payload === 'object' ? payload.iat : undefined)
+      .toBeGreaterThanOrEqual(now - 61);
+    expect(payload && typeof payload === 'object' ? payload.exp : undefined)
+      .toBeGreaterThan(now);
   });
 });
 

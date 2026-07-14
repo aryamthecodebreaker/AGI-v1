@@ -9,12 +9,12 @@ interface GitHubResponse<T> {
   json: T;
 }
 
-function appJwt(appId: string, privateKey: string): string {
+export function createGitHubAppJwt(appId: string, privateKey: string): string {
   const issuedAt = Math.floor(Date.now() / 1000) - 60;
   return jwt.sign(
     { iat: issuedAt, exp: issuedAt + 9 * 60, iss: appId },
     privateKey,
-    { algorithm: 'RS256', noTimestamp: true },
+    { algorithm: 'RS256' },
   );
 }
 
@@ -45,7 +45,7 @@ async function githubRequest<T>(
 
 async function installationToken(): Promise<string> {
   const config = getCapabilityGitHubConfig();
-  const auth = appJwt(config.appId, config.privateKey);
+  const auth = createGitHubAppJwt(config.appId, config.privateKey);
   const result = await githubRequest<{ token: string }>(
     `/app/installations/${encodeURIComponent(config.installationId)}/access_tokens`,
     auth,
