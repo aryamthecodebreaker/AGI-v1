@@ -13,6 +13,43 @@ afterEach(() => {
 });
 
 describe('OpenRouter conversational fallbacks', () => {
+  it('offers a bounded model-controlled web-search server tool', async () => {
+    let request: Record<string, unknown> | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        JSON.stringify({ choices: [{ delta: { content: 'SEARCH_OK' } }] }),
+        '[DONE]',
+      ]);
+    }));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free');
+    let response = '';
+    for await (const chunk of backend.generate(
+      [{ role: 'user', content: 'search for current information' }],
+      {
+        webSearch: {
+          maxResults: 3,
+          maxTotalResults: 3,
+          maxCharactersPerResult: 2_500,
+        },
+      },
+    )) {
+      response += chunk;
+    }
+
+    expect(response).toBe('SEARCH_OK');
+    expect(request?.tools).toEqual([{
+      type: 'openrouter:web_search',
+      parameters: {
+        engine: 'exa',
+        max_results: 3,
+        max_total_results: 3,
+        max_characters: 2_500,
+      },
+    }]);
+  });
+
   it('retries a rate-limited model before any text is emitted', async () => {
     const requestedModels: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
