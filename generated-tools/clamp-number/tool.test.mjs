@@ -35,3 +35,10 @@ test('clamp value equal to max', async () => {
 test('throws on non-finite', async () => {
   await assert.rejects(run({ value: NaN, min: 0, max: 10 }), /Non-finite number/);
 });
+
+test('throws when minimum exceeds maximum', async () => {
+  await assert.rejects(
+    run({ value: 5, min: 10, max: 0 }),
+    /Minimum cannot exceed maximum/,
+  );
+});
