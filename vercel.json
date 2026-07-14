@@ -18,6 +18,7 @@
     "NODE_ENV": "production",
     "LLM_BACKEND": "openrouter",
     "LLM_MODEL_ID": "qwen/qwen3-next-80b-a3b-instruct:free",
+    "OPENROUTER_FALLBACK_MODEL_IDS": "meta-llama/llama-3.3-70b-instruct:free,google/gemma-4-31b-it:free,openai/gpt-oss-20b:free",
     "DATA_DIR": "/tmp/agi-data"
   }
 }

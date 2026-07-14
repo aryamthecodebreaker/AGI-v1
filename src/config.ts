@@ -14,6 +14,7 @@ const envSchema = z.object({
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
   GEMINI_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_FALLBACK_MODEL_IDS: z.string().default(''),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
@@ -90,6 +91,10 @@ export const config = {
   embedModelId: parsed.EMBED_MODEL_ID,
   geminiApiKey: parsed.GEMINI_API_KEY,
   openRouterApiKey: parsed.OPENROUTER_API_KEY,
+  openRouterFallbackModelIds: parsed.OPENROUTER_FALLBACK_MODEL_IDS
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean),
   logLevel: parsed.LOG_LEVEL,
   rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
   rateLimitMaxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
