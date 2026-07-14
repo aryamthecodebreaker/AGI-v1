@@ -270,7 +270,10 @@ export class OpenRouterBackend implements LlmBackend {
       }
     }
 
-    const models = this.models(opts);
+    // Keep the free router as a final bounded fallback for ordinary chat too.
+    // This matters when every pinned free model is temporarily unavailable,
+    // especially after a failed web-search attempt has already degraded here.
+    const models = this.models(opts, true);
     let lastError: unknown;
     for (let index = 0; index < models.length; index++) {
       const model = models[index]!;

@@ -175,6 +175,36 @@ describe('OpenRouter conversational fallbacks', () => {
     expect(requestedModels).toEqual(['primary:free', 'fallback:free']);
   });
 
+  it('uses the free router after every pinned conversational model fails', async () => {
+    const requestedModels: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      requestedModels.push(body.model);
+      if (body.model !== 'openrouter/free') {
+        return new Response(JSON.stringify({
+          error: { message: 'provider unavailable' },
+        }), { status: 429, headers: { 'Content-Type': 'application/json' } });
+      }
+      return streamResponse([
+        JSON.stringify({ model: 'selected-chat-model:free', choices: [{ delta: { content: 'ROUTER_FALLBACK_OK' } }] }),
+        '[DONE]',
+      ]);
+    }));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free', ['fallback:free']);
+    let response = '';
+    for await (const chunk of backend.generate([{ role: 'user', content: 'hello' }])) {
+      response += chunk;
+    }
+
+    expect(response).toBe('ROUTER_FALLBACK_OK');
+    expect(requestedModels).toEqual([
+      'primary:free',
+      'fallback:free',
+      'openrouter/free',
+    ]);
+  });
+
   it('does not switch models after a response has started', async () => {
     const fetchMock = vi.fn(async () => streamResponse([
       JSON.stringify({ choices: [{ delta: { content: 'partial' } }] }),
