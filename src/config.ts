@@ -10,7 +10,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32).optional(),
   DATA_DIR: z.string().default('/tmp/agi-data'),
   LLM_BACKEND: z.enum(['transformers', 'scratch', 'gemini', 'openrouter']).default('gemini'),
-  LLM_MODEL_ID: z.string().default('gemini-2.5-flash'),
+  LLM_MODEL_ID: z.string().default('gemini-3-flash-preview'),
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
   GEMINI_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),

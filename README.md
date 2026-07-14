@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for ordinary chat, the tool-capable `openrouter/free` router for model-controlled web search, and Neon Postgres for shared storage. Ordinary chat never uses the random router. Schema-validated background tasks may use it only as a final fallback after every explicit provider fails; malformed extraction or proposal output is still rejected. If the primary conversational provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses Google's `gemini-3-flash-preview` model through the Gemini REST API and Neon Postgres for shared storage. The Gemini API key stays in Vercel's encrypted server-side environment and is never sent to the browser. OpenRouter remains available as an optional backend, including its ordered conversational fallbacks and model-controlled web-search route. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -33,7 +33,7 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - A small framework-free web UI for conversations, people, and memories.
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
-- Automatic OpenRouter web search for chat requests that need current or online information, capped at three results per turn.
+- Optional OpenRouter web search for chat requests that need current or online information, capped at three results per turn when the OpenRouter backend is active.
 - Automatic capability-gap recovery: a missing safe ability starts a sandboxed tool build or FixMap-guided source-improvement draft without requiring a slash command.
 - Explicit, authenticated `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
 - An authenticated `/improve-self` command that uses FixMap, validates a structured source proposal offline, and opens a draft PR.
@@ -49,7 +49,7 @@ browser
 Fastify orchestrator
   ├─ persists messages before LLM generation
   ├─ retrieves recent turns + hybrid memory + people
-  ├─ lets OpenRouter decide when a web search is needed
+  ├─ can let OpenRouter decide when a web search is needed
   ├─ detects capability gaps and starts safe recovery
   ├─ streams an OpenRouter, Gemini, or local-model response
   └─ extracts grounded facts and people through Vercel-aware background work
@@ -100,8 +100,8 @@ Reply text streams before hosted fact and people extraction runs, but AGI-v1 doe
 | Hosted storage | Neon Postgres through `@neondatabase/serverless` |
 | Local/test storage | `better-sqlite3` with FTS5 |
 | Embeddings | `Xenova/all-MiniLM-L6-v2` through `@huggingface/transformers` |
-| Hosted LLM | OpenRouter API with ordered conversational free-model fallbacks, a tool-capable free router for web requests, and the `openrouter:web_search` server tool |
-| Other LLM option | Google Gemini REST API |
+| Hosted LLM | Google Gemini REST API with `gemini-3-flash-preview` |
+| Other LLM option | OpenRouter API with ordered conversational fallbacks and the `openrouter:web_search` server tool |
 | Generated-code isolation | Vercel Sandbox |
 | Repository context map | FixMap 0.3.1 |
 | Frontend | Vanilla HTML, CSS, and JavaScript |
@@ -137,7 +137,7 @@ or:
 
 ```dotenv
 LLM_BACKEND=gemini
-LLM_MODEL_ID=gemini-2.5-flash
+LLM_MODEL_ID=gemini-3-flash-preview
 GEMINI_API_KEY=your_server_side_key
 ```
 
@@ -150,10 +150,9 @@ Open [localhost:3000](http://localhost:3000), register an account, and create a 
 The repository includes `vercel.json`. The deployed project needs:
 
 - `JWT_SECRET` with at least 32 random characters.
-- `OPENROUTER_API_KEY` for the checked-in Vercel OpenRouter configuration.
-- Optional `OPENROUTER_WEB_SEARCH_ENABLED=false` to disable paid web searches; it defaults to enabled for the OpenRouter backend.
-- Optional `OPENROUTER_WEB_SEARCH_MODEL_ID` to override the tool-capable search route; it defaults to `openrouter/free` and does not affect ordinary chat.
-- Optional `OPENROUTER_TASK_FALLBACK_MODEL_ID` for schema-validated background calls after every explicit provider fails; it defaults to `openrouter/free` and does not affect ordinary streamed chat.
+- `GEMINI_API_KEY` for the checked-in Vercel Gemini configuration.
+- The checked-in model is `gemini-3-flash-preview`; preview model identifiers and availability can change.
+- If switching back to OpenRouter, set `OPENROUTER_API_KEY`. Optional `OPENROUTER_WEB_SEARCH_ENABLED`, `OPENROUTER_WEB_SEARCH_MODEL_ID`, and `OPENROUTER_TASK_FALLBACK_MODEL_ID` settings apply only to that backend.
 - A Neon integration that provides `DATABASE_URL`.
 
 Without `DATABASE_URL`, Vercel falls back to a SQLite file under `/tmp`. That storage is per-instance and ephemeral, so signup may appear to work and a later authenticated request may return HTTP 401 from another instance. Use shared Postgres for any multi-instance deployment.
@@ -196,8 +195,9 @@ The integration tests create temporary data and remove it after the run. `.env.l
 
 ## Known limitations
 
-- Every configured OpenRouter free-model variant can still be rate-limited at the same time. Fallback occurs only before any output is emitted, preventing a response from switching models midway through a sentence.
-- OpenRouter web search is model-controlled and currently adds search and context-token charges when the model invokes it. AGI-v1 caps a turn at three Exa results.
+- `gemini-3-flash-preview` is a preview model, so its identifier, limits, and behavior can change.
+- The Gemini backend does not currently expose model-controlled web search. The optional OpenRouter backend supports it and caps a turn at three Exa results.
+- Every configured OpenRouter fallback can still be rate-limited at the same time when that optional backend is active. Fallback occurs only before any output is emitted, preventing a response from switching models midway through a sentence.
 - Tool-enabled web replies are returned after the bounded search completes instead of token-by-token so URL citation annotations can be retained as clickable source links.
 - The local embedding model can add cold-start time and memory usage.
 - Postgres vector search currently performs a bounded application-side scan instead of using `pgvector`.
