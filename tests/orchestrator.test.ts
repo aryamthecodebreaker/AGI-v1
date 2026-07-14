@@ -131,4 +131,24 @@ describe('Brain orchestrator', () => {
     expect(metaEvent).not.toBeNull();
     expect(metaEvent?.recentTurns).toBeGreaterThanOrEqual(0);
   });
+
+  it('reports an empty model response without persisting a fake assistant turn', async () => {
+    const user = storage.users.create({ username: 'emptytest', passwordHash: 'h' });
+    const conv = storage.conversations.create(user.id, 'Empty response test');
+    const orchestrator = createOrchestrator(storage, mockBackend([]));
+
+    const errors: string[] = [];
+    for await (const event of orchestrator.handleUserMessage({
+      userId: user.id,
+      conversationId: conv.id,
+      content: 'Please respond',
+    })) {
+      if (event.type === 'error') errors.push(event.data!);
+    }
+
+    expect(errors).toEqual(['The model returned an empty response. Please try again.']);
+    expect(storage.messages.listByConversation(conv.id)).toMatchObject([
+      { role: 'user', content: 'Please respond' },
+    ]);
+  });
 });

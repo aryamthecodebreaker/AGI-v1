@@ -8,6 +8,7 @@ const state = {
   user: null,
   conversations: [],
   currentConversationId: null,
+  conversationLoadRequest: 0,
   authMode: 'login',
 };
 
@@ -46,7 +47,10 @@ async function showChat() {
   $('#auth-view').classList.add('hidden');
   $('#chat-view').classList.remove('hidden');
   $('#who').textContent = `@${state.user.username}`;
-  await refreshConversations();
+  state.currentConversationId = null;
+  state.conversationLoadRequest += 1;
+  $('#messages').innerHTML = '';
+  await refreshConversations({ openDefault: true });
   await refreshMemories();
 }
 
@@ -98,6 +102,10 @@ $('#auth-form').addEventListener('submit', async (e) => {
 $('#logout').addEventListener('click', async () => {
   await api('/api/auth/logout', { method: 'POST' });
   state.user = null;
+  state.conversations = [];
+  state.currentConversationId = null;
+  state.conversationLoadRequest += 1;
+  $('#messages').innerHTML = '';
   showAuth();
 });
 
@@ -113,14 +121,11 @@ $$('.side-tab').forEach((btn) => {
 });
 
 // ---------- Conversations ----------
-async function refreshConversations() {
-  try {
-    state.conversations = await api('/api/conversations');
-  } catch { state.conversations = []; }
+function renderConversations() {
   const list = $('#side-conversations');
   list.innerHTML = '';
   if (state.conversations.length === 0) {
-    list.innerHTML = '<div class="empty-state">No chats yet. Start one →</div>';
+    list.innerHTML = '<div class="empty-state">No chats yet. Start one &rarr;</div>';
     return;
   }
   for (const c of state.conversations) {
@@ -132,22 +137,53 @@ async function refreshConversations() {
   }
 }
 
+async function refreshConversations({ openDefault = false } = {}) {
+  try {
+    state.conversations = await api('/api/conversations');
+  } catch { state.conversations = []; }
+
+  if (state.currentConversationId && !state.conversations.some((c) => c.id === state.currentConversationId)) {
+    state.currentConversationId = null;
+    state.conversationLoadRequest += 1;
+    $('#messages').innerHTML = '';
+  }
+
+  renderConversations();
+  if (openDefault && !state.currentConversationId && state.conversations.length > 0) {
+    await openConversation(state.conversations[0].id);
+  }
+}
+
 async function openConversation(id) {
+  const requestId = ++state.conversationLoadRequest;
   state.currentConversationId = id;
-  $$('.conv-item').forEach((el) => el.classList.remove('active'));
-  const messages = await api(`/api/conversations/${id}/messages`);
+  renderConversations();
+
   const container = $('#messages');
-  container.innerHTML = '';
-  for (const m of messages) addBubble(m.role, m.content);
-  container.scrollTop = container.scrollHeight;
-  await refreshConversations();
+  container.innerHTML = '<div class="empty-state">Loading chat&hellip;</div>';
+
+  try {
+    const messages = await api(`/api/conversations/${id}/messages`);
+    if (requestId !== state.conversationLoadRequest || id !== state.currentConversationId) return;
+
+    container.innerHTML = '';
+    for (const m of messages) addBubble(m.role, m.content);
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    if (requestId !== state.conversationLoadRequest || id !== state.currentConversationId) return;
+    container.innerHTML = '';
+    const error = document.createElement('div');
+    error.className = 'empty-state';
+    error.textContent = `Could not load this chat: ${err.message}`;
+    container.appendChild(error);
+  }
 }
 
 $('#new-chat').addEventListener('click', async () => {
   const c = await api('/api/conversations', { method: 'POST', body: JSON.stringify({}) });
   state.conversations.unshift(c);
-  await refreshConversations();
-  openConversation(c.id);
+  renderConversations();
+  await openConversation(c.id);
 });
 
 // ---------- Messages ----------
