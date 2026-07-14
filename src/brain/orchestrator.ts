@@ -297,12 +297,11 @@ export function createOrchestrator(
         });
       }
 
-      // 6. Background: unified people + facts extraction. One LLM call
+      // 6. Finalize unified people + facts extraction. One LLM call
       //    instead of two — critical for Gemini's free-tier RPM limits.
-      //    Vercel waitUntil keeps it alive after the response; local tests can
-      //    flush the tracked promise explicitly.
-      trackBackground(
-        (async () => {
+      //    Reply text has streamed, but SSE completion waits for durable memory.
+      //    waitUntil also protects this task if the client disconnects.
+      const extractionTask = (async () => {
           try {
             const { extractAndStoreMemory } = await import('./memoryExtraction.js');
             await extractAndStoreMemory(storage, llm, {
@@ -315,8 +314,9 @@ export function createOrchestrator(
           } catch (err) {
             logger.warn({ err }, 'memory extraction failed');
           }
-        })(),
-      );
+        })();
+      trackBackground(extractionTask);
+      await extractionTask;
 
       yield { type: 'done' };
     },
