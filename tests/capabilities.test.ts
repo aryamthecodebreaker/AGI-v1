@@ -5,6 +5,11 @@ import { parseCapabilityCommand } from '../src/capabilities/commands.js';
 import { assertCapabilityAdmin } from '../src/capabilities/config.js';
 import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
+import {
+  extractImprovementPatch,
+  validateImprovementPatch,
+} from '../src/capabilities/improvement.js';
+import { shouldAbortStreamOnResponseClose } from '../src/http/routes/chat.js';
 import type { ChatMessage, LlmBackend } from '../src/llm/types.js';
 
 const safeDraft = {
@@ -30,6 +35,14 @@ describe('capability commands', () => {
     });
   });
 
+  it('parses an explicit owner self-improvement goal', () => {
+    expect(parseCapabilityCommand('/improve-self Make chat errors clear and recoverable')).toEqual({
+      type: 'improve',
+      task: 'Make chat errors clear and recoverable',
+    });
+    expect(() => parseCapabilityCommand('/improve-self too short')).toThrow(/between 15 and 2,000/);
+  });
+
   it('parses merged-tool input as JSON', () => {
     expect(parseCapabilityCommand('/run-tool word-counter {"text":"hello world"}')).toEqual({
       type: 'run',
@@ -37,6 +50,57 @@ describe('capability commands', () => {
       input: { text: 'hello world' },
     });
     expect(() => parseCapabilityCommand('/run-tool word-counter nope')).toThrow(/valid JSON/);
+  });
+});
+
+describe('source improvement safety', () => {
+  const safePatch = `diff --git a/src/brain/example.ts b/src/brain/example.ts
+--- a/src/brain/example.ts
++++ b/src/brain/example.ts
+@@ -1 +1 @@
+-export const value = 1;
++export const value = 2;
+diff --git a/tests/example.test.ts b/tests/example.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/example.test.ts
+@@ -0,0 +1 @@
++export {};
+`;
+
+  it('extracts and validates a focused source patch with regression coverage', () => {
+    expect(extractImprovementPatch(`Here is the patch:\n${safePatch}`)).toBe(safePatch);
+    expect(validateImprovementPatch(safePatch)).toEqual([
+      'src/brain/example.ts',
+      'tests/example.test.ts',
+    ]);
+  });
+
+  it('blocks changes to self-improvement guardrails and dependency manifests', () => {
+    expect(() => validateImprovementPatch(safePatch.replaceAll(
+      'src/brain/example.ts',
+      'src/capabilities/improvement.ts',
+    ))).toThrow(/protected or unsupported path/);
+    expect(() => validateImprovementPatch(safePatch.replaceAll(
+      'src/brain/example.ts',
+      'package.json',
+    ))).toThrow(/protected or unsupported path/);
+    expect(() => validateImprovementPatch(safePatch.replaceAll(
+      'src/brain/example.ts',
+      'src/http/routes/chat.ts',
+    ))).toThrow(/protected or unsupported path/);
+  });
+
+  it('requires a regression test for executable changes', () => {
+    expect(() => validateImprovementPatch(safePatch.split('diff --git a/tests/')[0]!))
+      .toThrow(/must include a regression test/);
+  });
+});
+
+describe('chat stream disconnect handling', () => {
+  it('does not abort after a normal completed response', () => {
+    expect(shouldAbortStreamOnResponseClose(true)).toBe(false);
+    expect(shouldAbortStreamOnResponseClose(false)).toBe(true);
   });
 });
 

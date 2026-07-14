@@ -222,7 +222,20 @@ $('#chat-form').addEventListener('submit', async (e) => {
       credentials: 'same-origin',
       body: JSON.stringify({ conversationId: state.currentConversationId, content }),
     });
-    if (!res.ok) throw new Error(`Chat HTTP ${res.status}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message = body.message || body.error || `Chat HTTP ${res.status}`;
+      if (res.status === 401) {
+        assistant.classList.remove('thinking');
+        state.user = null;
+        state.currentConversationId = null;
+        state.conversationLoadRequest += 1;
+        showAuth();
+        $('#auth-error').textContent = 'Your session expired. Log in again to continue this chat.';
+        return;
+      }
+      throw new Error(message);
+    }
 
     // Read SSE stream
     const reader = res.body.getReader();
@@ -242,7 +255,11 @@ $('#chat-form').addEventListener('submit', async (e) => {
         try {
           const parsed = JSON.parse(data);
           if (parsed.token) assistant.textContent += parsed.token;
-          else if (parsed.error) assistant.textContent += `\n[error: ${parsed.error}]`;
+          else if (parsed.error) {
+            assistant.textContent += assistant.textContent
+              ? `\n\nError: ${parsed.error}`
+              : `Could not complete the reply: ${parsed.error}`;
+          }
         } catch { /* ignore malformed frame */ }
       }
     }
