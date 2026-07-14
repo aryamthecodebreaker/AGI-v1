@@ -96,24 +96,22 @@ export async function extractAndStoreMemory(
     },
   ];
 
-  let raw: string;
+  let payload: ExtractedPayload | null = null;
   try {
-    raw = await llm.generateOnce(messages, {
+    const raw = await llm.generateOnce(messages, {
       maxNewTokens: 320,
       temperature: 0.1,
       jsonObject: true,
     });
+    payload = parseExtraction(raw);
+    if (!payload) {
+      logger.warn(
+        { responseLength: raw.length },
+        'memory extraction response was not parseable; trying source-only fallback',
+      );
+    }
   } catch (err) {
-    logger.warn({ err }, 'memory extraction LLM call failed');
-    return;
-  }
-
-  const payload = parseExtraction(raw);
-  if (!payload) {
-    logger.warn(
-      { responseLength: raw.length },
-      'memory extraction response was not parseable; trying source-only fallback',
-    );
+    logger.warn({ err }, 'memory extraction LLM call failed; trying source-only fallback');
   }
 
   // --- People ---
