@@ -52,7 +52,7 @@ Fastify orchestrator
   ├─ lets OpenRouter decide when a web search is needed
   ├─ detects capability gaps and starts safe recovery
   ├─ streams an OpenRouter, Gemini, or local-model response
-  └─ extracts grounded facts and people in the background
+  └─ extracts grounded facts and people through Vercel-aware background work
         │
         ├─ local: SQLite + FTS5
         └─ hosted: Neon Postgres + tsvector search
@@ -88,6 +88,8 @@ Each user may have one active capability request at a time and may start at most
 6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.
 
 The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without a signed-in user's request and human review.
+
+Hosted fact and people extraction is registered with Vercel's `waitUntil()` lifecycle API. The chat response can finish without waiting for extraction, while the function remains alive long enough to validate and store durable memories.
 
 ## Tech stack
 

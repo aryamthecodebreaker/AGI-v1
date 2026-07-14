@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { waitUntil } from '@vercel/functions';
 import type { LlmBackend } from '../src/llm/types.js';
 import type { AutoCapabilityRecovery } from '../src/capabilities/autoRecovery.js';
 import { storageFromDb } from '../src/storage/index.js';
@@ -10,6 +11,10 @@ import { createOrchestrator, flushBackgroundTasks } from '../src/brain/orchestra
 
 vi.mock('../src/llm/embeddings.js', () => ({
   embed: vi.fn(async () => new Float32Array(384)),
+}));
+
+vi.mock('@vercel/functions', () => ({
+  waitUntil: vi.fn(),
 }));
 
 function mockBackend(chunks: string[], onChunk?: (chunk: string) => void): LlmBackend {
@@ -32,6 +37,8 @@ describe('Brain orchestrator', () => {
   let storage: ReturnType<typeof storageFromDb>;
 
   beforeEach(() => {
+    delete process.env.VERCEL;
+    vi.mocked(waitUntil).mockClear();
     tmpPath = path.join(os.tmpdir(), `agi-orch-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
     db = new Database(tmpPath);
     db.pragma('journal_mode = WAL');
@@ -40,12 +47,31 @@ describe('Brain orchestrator', () => {
   });
 
   afterEach(async () => {
+    delete process.env.VERCEL;
     // Flush any pending background tasks
     await flushBackgroundTasks();
     db.close();
     try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
     try { fs.unlinkSync(tmpPath + '-wal'); } catch { /* ignore */ }
     try { fs.unlinkSync(tmpPath + '-shm'); } catch { /* ignore */ }
+  });
+
+  it('registers memory extraction with the Vercel request lifecycle', async () => {
+    process.env.VERCEL = '1';
+    const user = storage.users.create({ username: 'vercelwait', passwordHash: 'h' });
+    const conv = storage.conversations.create(user.id, 'Lifecycle test');
+    const orchestrator = createOrchestrator(storage, mockBackend(['Stored response']));
+
+    for await (const _event of orchestrator.handleUserMessage({
+      userId: user.id,
+      conversationId: conv.id,
+      content: 'Remember this.',
+    })) {
+      // consume the stream so background extraction is scheduled
+    }
+
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(waitUntil).mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
   it('creates conversation and persists user message', async () => {

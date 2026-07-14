@@ -15,6 +15,7 @@
 
 import type { Storage } from '../storage/index.js';
 import type { LlmBackend, ChatMessage } from '../llm/types.js';
+import { waitUntil } from '@vercel/functions';
 import { getLlmBackend } from '../llm/registry.js';
 import { embed } from '../llm/embeddings.js';
 import { logger } from '../logger.js';
@@ -49,6 +50,17 @@ export async function flushBackgroundTasks(): Promise<void> {
 }
 
 function trackBackground(p: Promise<void>): void {
+  // A Vercel Function may stop as soon as its response finishes. Register the
+  // promise with the platform so post-response extraction remains inside the
+  // invocation lifecycle without delaying the streamed chat response.
+  if (process.env.VERCEL === '1') {
+    try {
+      waitUntil(p);
+    } catch (err) {
+      logger.warn({ err }, 'could not register background task with Vercel');
+    }
+  }
+
   // Prune completed tasks before adding new one
   const completed = Array.from(backgroundTasks).filter((t) => {
     const status = (t as Promise<void> & { status?: string }).status;
@@ -285,9 +297,10 @@ export function createOrchestrator(
         });
       }
 
-      // 6. Fire-and-forget: unified people + facts extraction. One LLM call
+      // 6. Background: unified people + facts extraction. One LLM call
       //    instead of two — critical for Gemini's free-tier RPM limits.
-      //    Runs off the hot path so streaming latency isn't affected.
+      //    Vercel waitUntil keeps it alive after the response; local tests can
+      //    flush the tracked promise explicitly.
       trackBackground(
         (async () => {
           try {
