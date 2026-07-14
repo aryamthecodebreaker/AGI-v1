@@ -17,7 +17,7 @@
   "env": {
     "NODE_ENV": "production",
     "LLM_BACKEND": "openrouter",
-    "LLM_MODEL_ID": "openrouter/free",
+    "LLM_MODEL_ID": "qwen/qwen3-next-80b-a3b-instruct:free",
     "DATA_DIR": "/tmp/agi-data"
   }
 }
