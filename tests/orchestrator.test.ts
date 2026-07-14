@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { LlmBackend } from '../src/llm/types.js';
+import type { AutoCapabilityRecovery } from '../src/capabilities/autoRecovery.js';
 import { storageFromDb } from '../src/storage/index.js';
 import { createOrchestrator, flushBackgroundTasks } from '../src/brain/orchestrator.js';
 
@@ -130,6 +131,48 @@ describe('Brain orchestrator', () => {
     
     expect(metaEvent).not.toBeNull();
     expect(metaEvent?.recentTurns).toBeGreaterThanOrEqual(0);
+  });
+
+  it('conceals a capability-gap signal and automatically executes recovery', async () => {
+    const user = storage.users.create({ username: 'recoverytest', passwordHash: 'h' });
+    const conv = storage.conversations.create(user.id, 'Recovery test');
+    const backend = mockBackend([
+      '<capability-',
+      'gap>{"kind":"tool","task":"Convert a supplied color value into another format"}</capability-gap>',
+    ]);
+    const recovery: AutoCapabilityRecovery = {
+      classify: vi.fn(async () => null),
+      execute: vi.fn(async () => ({
+        kind: 'tool',
+        message: 'I built the missing tool. Draft PR: https://example.test/pr/1',
+        requestId: 'cap_test',
+        prUrl: 'https://example.test/pr/1',
+        reused: false,
+      })),
+    };
+    const orchestrator = createOrchestrator(storage, backend, recovery);
+
+    let response = '';
+    for await (const event of orchestrator.handleUserMessage({
+      userId: user.id,
+      conversationId: conv.id,
+      content: 'Convert this color for me',
+    })) {
+      if (event.type === 'token') response += event.data;
+    }
+
+    expect(response).not.toContain('<capability-gap>');
+    expect(response).toContain('I detected a missing offline capability');
+    expect(response).toContain('Draft PR: https://example.test/pr/1');
+    expect(recovery.classify).not.toHaveBeenCalled();
+    expect(recovery.execute).toHaveBeenCalledWith(user.id, {
+      kind: 'tool',
+      task: 'Convert a supplied color value into another format',
+    });
+    expect(storage.messages.listByConversation(conv.id)).toMatchObject([
+      { role: 'user', content: 'Convert this color for me' },
+      { role: 'assistant', content: expect.stringContaining('Draft PR: https://example.test/pr/1') },
+    ]);
   });
 
   it('reports an empty model response without persisting a fake assistant turn', async () => {

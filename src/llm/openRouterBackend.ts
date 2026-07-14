@@ -32,7 +32,7 @@ class OpenRouterRequestError extends Error {
 }
 
 function requestBody(messages: ChatMessage[], opts: GenOpts, stream: boolean): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     model: config.llmModelId,
     messages,
     stream,
@@ -40,6 +40,18 @@ function requestBody(messages: ChatMessage[], opts: GenOpts, stream: boolean): R
     max_tokens: opts.maxNewTokens ?? 512,
     top_p: opts.topP,
   };
+  if (opts.webSearch) {
+    body.tools = [{
+      type: 'openrouter:web_search',
+      parameters: {
+        engine: 'exa',
+        max_results: opts.webSearch.maxResults,
+        max_total_results: opts.webSearch.maxTotalResults,
+        max_characters: opts.webSearch.maxCharactersPerResult,
+      },
+    }];
+  }
+  return body;
 }
 
 function headers(apiKey: string): Record<string, string> {
@@ -89,13 +101,16 @@ function retryable(error: unknown): error is OpenRouterRequestError {
 
 export class OpenRouterBackend implements LlmBackend {
   readonly name: string;
+  readonly supportsWebSearch: boolean;
 
   constructor(
     private readonly apiKey: string,
     private readonly modelId: string,
     private readonly fallbackModelIds: string[] = [],
+    webSearchEnabled = true,
   ) {
     this.name = `openrouter:${modelId}`;
+    this.supportsWebSearch = webSearchEnabled;
   }
 
   async ready(): Promise<void> {
@@ -249,6 +264,7 @@ export function getOpenRouterBackend(): OpenRouterBackend {
     config.openRouterApiKey,
     config.llmModelId,
     config.openRouterFallbackModelIds,
+    config.openRouterWebSearchEnabled,
   );
   return cached;
 }

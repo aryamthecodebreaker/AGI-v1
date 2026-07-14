@@ -187,10 +187,35 @@ $('#new-chat').addEventListener('click', async () => {
 });
 
 // ---------- Messages ----------
+function renderMessageContent(element, content) {
+  element.textContent = '';
+  const pattern = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
+  let cursor = 0;
+  for (const match of content.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    element.appendChild(document.createTextNode(content.slice(cursor, index)));
+    const rawUrl = match[2] || match[3];
+    try {
+      const url = new URL(rawUrl);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported link');
+      const link = document.createElement('a');
+      link.href = url.href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = match[1] || rawUrl;
+      element.appendChild(link);
+    } catch {
+      element.appendChild(document.createTextNode(match[0]));
+    }
+    cursor = index + match[0].length;
+  }
+  element.appendChild(document.createTextNode(content.slice(cursor)));
+}
+
 function addBubble(role, content) {
   const div = document.createElement('div');
   div.className = `bubble ${role}`;
-  div.textContent = content;
+  renderMessageContent(div, content);
   $('#messages').appendChild(div);
   $('#messages').scrollTop = $('#messages').scrollHeight;
   return div;
@@ -263,6 +288,7 @@ $('#chat-form').addEventListener('submit', async (e) => {
         } catch { /* ignore malformed frame */ }
       }
     }
+    renderMessageContent(assistant, assistant.textContent);
     assistant.classList.remove('thinking');
     await refreshMemories();
     await refreshConversations();
@@ -292,7 +318,11 @@ async function refreshMemories() {
     for (const m of memories) {
       const item = document.createElement('div');
       item.className = 'memory-item';
-      item.innerHTML = `<span class="kind">${m.kind}</span>${m.content}`;
+      const kind = document.createElement('span');
+      kind.className = 'kind';
+      kind.textContent = m.kind;
+      item.appendChild(kind);
+      item.appendChild(document.createTextNode(m.content));
       list.appendChild(item);
     }
   } catch { /* memories route not wired yet */ }

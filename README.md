@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for chat generation and Neon Postgres for shared storage. Pinning conversational models avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. If the primary free provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for chat generation, model-controlled web search, and Neon Postgres for shared storage. Pinning conversational models avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. If the primary free provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -33,6 +33,8 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - A small framework-free web UI for conversations, people, and memories.
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
+- Automatic OpenRouter web search for chat requests that need current or online information, capped at three results per turn.
+- Automatic capability-gap recovery: a missing safe ability starts a sandboxed tool build or FixMap-guided source-improvement draft without requiring a slash command.
 - Explicit, authenticated `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
 - An authenticated `/improve-self` command that uses FixMap, validates a structured source proposal offline, and opens a draft PR.
 
@@ -47,6 +49,8 @@ browser
 Fastify orchestrator
   ├─ persists messages before LLM generation
   ├─ retrieves recent turns + hybrid memory + people
+  ├─ lets OpenRouter decide when a web search is needed
+  ├─ detects capability gaps and starts safe recovery
   ├─ streams an OpenRouter, Gemini, or local-model response
   └─ extracts grounded facts and people in the background
         │
@@ -60,7 +64,7 @@ Memory ranking uses Reciprocal Rank Fusion to combine keyword and cosine-similar
 
 Capability building is disabled unless the deployment explicitly enables and configures it. It does not let the running app rewrite or merge `main`.
 
-1. A signed-in user sends `/build-tool <task>`.
+1. A signed-in user sends `/build-tool <task>`, or normal chat detects that a safe request needs a missing offline tool.
 2. The LLM proposes one dependency-free Node.js tool, tests, and sample input as strict JSON.
 3. Static validation rejects environment, process, filesystem, network, child-process, worker, dynamic-import, and dynamic-code access.
 4. Vercel Sandbox runs syntax checks, `node:test`, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials.
@@ -74,7 +78,7 @@ Each user may have one active capability request at a time and may start at most
 
 ## Safe source improvement
 
-`/improve-self <goal>` lets a signed-in user ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README.
+`/improve-self <goal>` lets a signed-in user ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README. Normal chat can start the same workflow automatically when the model emits a source-level capability-gap signal.
 
 1. A fresh Vercel Sandbox clones the public `main` branch and installs its already-reviewed dependencies without receiving application or GitHub credentials.
 2. Sandbox egress is switched to `deny-all`.
@@ -83,7 +87,7 @@ Each user may have one active capability request at a time and may start at most
 5. Executable proposals must include regression tests. Git validates the generated diff, then the sandbox runs `npm test` and `npm run build` without network access.
 6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.
 
-The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without an explicit signed-in user request and human review.
+The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without a signed-in user's request and human review.
 
 ## Tech stack
 
@@ -94,7 +98,7 @@ The running app cannot push to `main`, merge a PR, edit its safeguards, access p
 | Hosted storage | Neon Postgres through `@neondatabase/serverless` |
 | Local/test storage | `better-sqlite3` with FTS5 |
 | Embeddings | `Xenova/all-MiniLM-L6-v2` through `@huggingface/transformers` |
-| Hosted LLM | OpenRouter API with ordered conversational free-model fallbacks |
+| Hosted LLM | OpenRouter API with ordered conversational free-model fallbacks and the `openrouter:web_search` server tool |
 | Other LLM option | Google Gemini REST API |
 | Generated-code isolation | Vercel Sandbox |
 | Repository context map | FixMap 0.3.1 |
@@ -143,6 +147,7 @@ The repository includes `vercel.json`. The deployed project needs:
 
 - `JWT_SECRET` with at least 32 random characters.
 - `OPENROUTER_API_KEY` for the checked-in Vercel OpenRouter configuration.
+- Optional `OPENROUTER_WEB_SEARCH_ENABLED=false` to disable paid web searches; it defaults to enabled for the OpenRouter backend.
 - A Neon integration that provides `DATABASE_URL`.
 
 Without `DATABASE_URL`, Vercel falls back to a SQLite file under `/tmp`. That storage is per-instance and ephemeral, so signup may appear to work and a later authenticated request may return HTTP 401 from another instance. Use shared Postgres for any multi-instance deployment.
@@ -165,7 +170,7 @@ The GitHub App must be installed only on `aryamthecodebreaker/AGI-v1` with:
 - Pull requests: read and write.
 - No administration, secrets, Actions, or workflows permission.
 
-Vercel supplies Sandbox authentication through project OIDC in production. Once the GitHub App values are configured, set `CAPABILITY_BUILDER_ENABLED=true` to make the commands available to signed-in users.
+Vercel supplies Sandbox authentication through project OIDC in production. Once the GitHub App values are configured, set `CAPABILITY_BUILDER_ENABLED=true` to make explicit commands and automatic capability recovery available to signed-in users.
 
 ## Tests
 
@@ -186,11 +191,12 @@ The integration tests create temporary data and remove it after the run. `.env.l
 ## Known limitations
 
 - Every configured OpenRouter free-model variant can still be rate-limited at the same time. Fallback occurs only before any output is emitted, preventing a response from switching models midway through a sentence.
+- OpenRouter web search is model-controlled and currently adds search and context-token charges when the model invokes it. AGI-v1 caps a turn at three Exa results.
 - The local embedding model can add cold-start time and memory usage.
 - Postgres vector search currently performs a bounded application-side scan instead of using `pgvector`.
 - Generated capabilities are deliberately limited to dependency-free, offline computation.
 - Capability PRs still require human review and protected-branch checks.
-- Source self-improvements are bounded patch proposals, not an autonomous merge or deployment loop.
+- Automatic source self-improvements are bounded patch proposals, not an autonomous merge or deployment loop.
 - `LLM_BACKEND=scratch` is a placeholder; a scratch backend is not implemented.
 
 ## License

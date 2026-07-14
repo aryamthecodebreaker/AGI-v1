@@ -2,6 +2,11 @@ import { generateKeyPairSync } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { describe, expect, it } from 'vitest';
 import { parseCapabilityCommand } from '../src/capabilities/commands.js';
+import {
+  classifyCapabilityLimitation,
+  looksLikeCapabilityLimitation,
+  parseCapabilityGapMarker,
+} from '../src/capabilities/autoRecovery.js';
 import { assertCapabilityEnabled } from '../src/capabilities/config.js';
 import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
@@ -55,6 +60,43 @@ describe('capability commands', () => {
       input: { text: 'hello world' },
     });
     expect(() => parseCapabilityCommand('/run-tool word-counter nope')).toThrow(/valid JSON/);
+  });
+});
+
+describe('automatic capability-gap detection', () => {
+  it('parses a strict internal gap signal', () => {
+    expect(parseCapabilityGapMarker(
+      '<capability-gap>{"kind":"source","task":"Add a reviewed calendar integration to AGI-v1"}</capability-gap>',
+    )).toEqual({
+      kind: 'source',
+      task: 'Add a reviewed calendar integration to AGI-v1',
+    });
+  });
+
+  it('recognizes missing executable abilities without treating ordinary uncertainty as a gap', () => {
+    expect(looksLikeCapabilityLimitation("I can't browse the web right now.")).toBe(true);
+    expect(looksLikeCapabilityLimitation("I don't know the answer from the context provided.")).toBe(false);
+  });
+
+  it('classifies a natural capability refusal into a reusable tool task', async () => {
+    const backend: LlmBackend = {
+      name: 'test:gap-classifier',
+      ready: async () => {},
+      async *generate() {},
+      generateOnce: async () => JSON.stringify({
+        kind: 'tool',
+        task: 'Convert a supplied image color from RGB to hexadecimal',
+      }),
+    };
+
+    await expect(classifyCapabilityLimitation(
+      backend,
+      'Convert this RGB color to hex',
+      "I can't run a conversion tool right now.",
+    )).resolves.toEqual({
+      kind: 'tool',
+      task: 'Convert a supplied image color from RGB to hexadecimal',
+    });
   });
 });
 

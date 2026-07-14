@@ -18,6 +18,11 @@ import type { LlmBackend, ChatMessage } from '../llm/types.js';
 import { getLlmBackend } from '../llm/registry.js';
 import { embed } from '../llm/embeddings.js';
 import { logger } from '../logger.js';
+import {
+  createAutoCapabilityRecovery,
+  parseCapabilityGapMarker,
+  type AutoCapabilityRecovery,
+} from '../capabilities/autoRecovery.js';
 import { assembleContext } from './retrieval.js';
 import { buildPrompt } from './contextBuilder.js';
 
@@ -67,8 +72,18 @@ export interface Orchestrator {
   handleUserMessage(input: HandleUserMessageInput): AsyncGenerator<OrchestratorEvent>;
 }
 
-export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orchestrator {
+const CAPABILITY_MARKER_PREFIX = '<capability-gap>';
+
+export function createOrchestrator(
+  storage: Storage,
+  backend?: LlmBackend,
+  recovery?: AutoCapabilityRecovery,
+): Orchestrator {
   const llm = backend ?? getLlmBackend();
+  const capabilityRecovery = recovery ?? (backend
+    ? undefined
+    : createAutoCapabilityRecovery(storage, llm));
+  const webSearchAvailable = llm.supportsWebSearch === true;
 
   return {
     async *handleUserMessage(input: HandleUserMessageInput): AsyncGenerator<OrchestratorEvent> {
@@ -132,14 +147,52 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       };
 
       // 4. Build prompt and stream tokens.
-      const prompt: ChatMessage[] = buildPrompt({ context: ctx, userMessage: content });
+      const prompt: ChatMessage[] = buildPrompt({
+        context: ctx,
+        userMessage: content,
+        webSearchAvailable,
+      });
 
       let assembled = '';
+      let held = '';
+      let streamMode: 'pending' | 'normal' | 'marker' = 'pending';
       try {
         await llm.ready();
-        for await (const chunk of llm.generate(prompt, { maxNewTokens: 384, temperature: 0.7, signal })) {
+        for await (const chunk of llm.generate(prompt, {
+          maxNewTokens: 384,
+          temperature: 0.7,
+          signal,
+          ...(webSearchAvailable
+            ? {
+                webSearch: {
+                  maxResults: 3,
+                  maxTotalResults: 3,
+                  maxCharactersPerResult: 2_500,
+                },
+              }
+            : {}),
+        })) {
           assembled += chunk;
-          yield { type: 'token', data: chunk };
+          if (streamMode === 'normal') {
+            yield { type: 'token', data: chunk };
+            continue;
+          }
+
+          held += chunk;
+          const candidate = held.trimStart().toLowerCase();
+          if (
+            candidate.length < CAPABILITY_MARKER_PREFIX.length
+            && CAPABILITY_MARKER_PREFIX.startsWith(candidate)
+          ) {
+            continue;
+          }
+          if (candidate.startsWith(CAPABILITY_MARKER_PREFIX)) {
+            streamMode = 'marker';
+            continue;
+          }
+          streamMode = 'normal';
+          yield { type: 'token', data: held };
+          held = '';
         }
       } catch (err) {
         logger.error({ err }, 'LLM generation failed');
@@ -147,12 +200,61 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
         return;
       }
 
-      const assistantText = assembled.trim();
+      let assistantText = assembled.trim();
       if (!assistantText) {
         const message = 'The model returned an empty response. Please try again.';
         logger.warn({ userId, conversationId }, 'LLM generation returned no text');
         yield { type: 'error', data: message };
         return;
+      }
+
+      const markerGap = parseCapabilityGapMarker(assistantText);
+      let gap = markerGap;
+      if (!gap && capabilityRecovery) {
+        gap = await capabilityRecovery.classify(content, assistantText);
+      }
+
+      const concealedGapSignal = streamMode === 'marker';
+      if (gap && capabilityRecovery) {
+        const progress = gap.kind === 'tool'
+          ? 'I detected a missing offline capability. I am generating and testing it now.'
+          : 'I detected a source-level capability gap. I am mapping and testing an improvement now.';
+        const progressText = concealedGapSignal ? progress : `\n\n${progress}`;
+        yield {
+          type: 'meta',
+          meta: { capabilityRecovery: 'started', kind: gap.kind },
+        };
+        yield { type: 'token', data: progressText };
+
+        let completion: string;
+        try {
+          const result = await capabilityRecovery.execute(userId, gap);
+          completion = `\n\n${result.message}`;
+          yield {
+            type: 'meta',
+            meta: {
+              capabilityRecovery: 'completed',
+              kind: result.kind,
+              requestId: result.requestId,
+              prUrl: result.prUrl,
+              reused: result.reused,
+            },
+          };
+        } catch (error) {
+          logger.error({ err: error, userId, conversationId, kind: gap.kind }, 'automatic capability recovery failed');
+          const detail = error instanceof Error ? error.message : 'Unknown error';
+          completion = `\n\nI detected the gap, but the automatic improvement could not finish: ${detail.slice(0, 300)}`;
+        }
+        yield { type: 'token', data: completion };
+        assistantText = concealedGapSignal
+          ? `${progress}${completion}`.trim()
+          : `${assistantText}${progressText}${completion}`.trim();
+      } else if (concealedGapSignal) {
+        const message = 'I detected a capability gap, but I could not determine a safe automatic improvement. Please try describing the task more specifically.';
+        yield { type: 'token', data: message };
+        assistantText = message;
+      } else if (held) {
+        yield { type: 'token', data: held };
       }
 
       // 5. Persist assistant reply.

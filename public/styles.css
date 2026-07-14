@@ -195,6 +195,11 @@ button.primary:active { transform: translateY(0); }
   border: 1px solid var(--bubble-border); 
   color: var(--text);
 }
+.bubble a {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .bubble.assistant.thinking::after {
   content: '▍'; color: var(--accent-light); animation: blink 1s steps(1) infinite;
 }

@@ -15,6 +15,8 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_FALLBACK_MODEL_IDS: z.string().default(''),
+  OPENROUTER_WEB_SEARCH_ENABLED: z.string().default('true')
+    .transform((value) => value.trim().toLowerCase() === 'true'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(100),
@@ -95,6 +97,7 @@ export const config = {
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean),
+  openRouterWebSearchEnabled: parsed.OPENROUTER_WEB_SEARCH_ENABLED,
   logLevel: parsed.LOG_LEVEL,
   rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
   rateLimitMaxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
