@@ -2,6 +2,7 @@
 # Environment variables
 .env.local
 .env.*
+.env
 
 # Dependencies
 node_modules/
@@ -63,3 +64,4 @@ htmlcov/
 *.tar.zst
 ```
 .vercel
+.env*.local

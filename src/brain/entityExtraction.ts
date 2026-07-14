@@ -64,7 +64,7 @@ export async function extractAndStorePeople(
     const name = (p.name || '').trim();
     if (!name) continue;
     try {
-      const person = storage.people.upsert({
+      const person = await storage.people.upsert({
         userId: input.userId,
         displayName: name,
         relationship: p.relationship && p.relationship !== 'unknown' ? p.relationship : undefined,

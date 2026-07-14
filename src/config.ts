@@ -24,8 +24,9 @@ function ensureJwtSecret(): string {
   const existing = process.env.JWT_SECRET;
   if (existing && existing.length >= 32) return existing;
 
-  // In production environments without VERCEL flag, require JWT_SECRET to be set
-  if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+  // Never generate per-instance auth secrets in production. On serverless
+  // hosts that would make otherwise-valid cookies fail on another instance.
+  if (process.env.NODE_ENV === 'production') {
     throw new Error('JWT_SECRET must be set in production environment via environment variable');
   }
 

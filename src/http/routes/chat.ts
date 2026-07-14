@@ -9,6 +9,10 @@ import { requireAuth } from '../../auth/middleware.js';
 import { createOrchestrator } from '../../brain/orchestrator.js';
 import { startSse } from '../sse.js';
 import { logger } from '../../logger.js';
+import { parseCapabilityCommand } from '../../capabilities/commands.js';
+import { assertCapabilityAdmin } from '../../capabilities/config.js';
+import { buildCapability, runMergedCapability } from '../../capabilities/service.js';
+import { Errors } from '../../util/errors.js';
 
 const chatSchema = z.object({
   conversationId: z.string().min(1),
@@ -31,9 +35,56 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     const user = req.user!;
 
     // Verify the conversation belongs to this user.
-    const conv = storage.conversations.getById(body.conversationId);
+    const conv = await storage.conversations.getById(body.conversationId);
     if (!conv || conv.user_id !== user.id) {
       return reply.status(404).send({ error: 'conversation not found' });
+    }
+
+    let capabilityCommand: ReturnType<typeof parseCapabilityCommand>;
+    try {
+      capabilityCommand = parseCapabilityCommand(body.content);
+    } catch (error) {
+      throw Errors.badRequest((error as Error).message);
+    }
+
+    if (capabilityCommand) {
+      assertCapabilityAdmin(user.id);
+      await storage.messages.insert({
+        conversationId: body.conversationId,
+        userId: user.id,
+        role: 'user',
+        content: body.content,
+      });
+      await storage.conversations.touch(body.conversationId);
+
+      const sse = startSse(reply);
+      sse.comment(capabilityCommand.type === 'build'
+        ? 'generating and validating capability'
+        : 'running merged capability in sandbox');
+      try {
+        const responseText = capabilityCommand.type === 'build'
+          ? await buildCapability(storage, user.id, capabilityCommand.task).then((result) => [
+              `Built and tested ${result.slug} in a network-denied sandbox.`,
+              `Sample output: ${result.sampleOutput}`,
+              `Draft PR: ${result.prUrl}`,
+              'It cannot modify or merge main; review and merge the PR before using /run-tool.',
+            ].join('\n'))
+          : await runMergedCapability(user.id, capabilityCommand.slug, capabilityCommand.input);
+
+        await storage.messages.insert({
+          conversationId: body.conversationId,
+          userId: user.id,
+          role: 'assistant',
+          content: responseText,
+        });
+        sse.send({ token: responseText });
+      } catch (error) {
+        logger.error({ err: error }, 'capability command failed');
+        sse.send({ error: (error as Error).message });
+      } finally {
+        sse.done();
+      }
+      return;
     }
 
     const orchestrator = createOrchestrator(storage);

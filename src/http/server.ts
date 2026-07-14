@@ -13,6 +13,8 @@ import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { chatRoutes } from './routes/chat.js';
 import { memoryRoutes } from './routes/memories.js';
+import { peopleRoutes } from './routes/people.js';
+import { capabilityRoutes } from './routes/capabilities.js';
 import { toHttpError } from '../util/errors.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,7 +34,7 @@ function resolvePublicDir(): string {
 }
 
 export async function buildServer(storageOverride?: Storage): Promise<FastifyInstance> {
-  const storage = storageOverride ?? initStorage();
+  const storage = storageOverride ?? await initStorage();
 
   const app = Fastify({
     logger: config.nodeEnv === 'development'
@@ -60,13 +62,19 @@ export async function buildServer(storageOverride?: Storage): Promise<FastifyIns
   });
 
   // Health check
-  app.get('/healthz', async () => ({ ok: true, backend: config.llmBackend }));
+  app.get('/healthz', async () => ({
+    ok: true,
+    backend: config.llmBackend,
+    storage: storage.kind,
+  }));
 
   // API routes with selective rate limiting
   await authRoutes(app, storage);
   await conversationRoutes(app, storage);
   await chatRoutes(app, storage);
   await memoryRoutes(app, storage);
+  await peopleRoutes(app, storage);
+  await capabilityRoutes(app, storage);
 
   // Unified error handler
   app.setErrorHandler((err, _req, reply) => {

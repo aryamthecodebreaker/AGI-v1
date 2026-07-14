@@ -130,4 +130,16 @@ describe('STORAGE brain', () => {
     expect(list.map((m) => m.id)).toContain(mem.id);
     expect(storage.personMemories.getPeopleIdsForMemory(mem.id)).toContain(sarah.id);
   });
+
+  it('records capability build status for auditability', () => {
+    const user = storage.users.create({ username: 'owner', passwordHash: 'h' });
+    const request = storage.capabilityRequests.create(user.id, 'Build a safe word counter');
+    expect(request.status).toBe('pending');
+    const updated = storage.capabilityRequests.update(request.id, {
+      status: 'validating',
+      slug: 'word-counter',
+    });
+    expect(updated?.status).toBe('validating');
+    expect(storage.capabilityRequests.listByUser(user.id)).toHaveLength(1);
+  });
 });

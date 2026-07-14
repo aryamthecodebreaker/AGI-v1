@@ -96,7 +96,7 @@ export async function extractAndStoreMemory(
 
   for (const p of groundedPeople) {
     try {
-      const person = storage.people.upsert({
+      const person = await storage.people.upsert({
         userId: input.userId,
         displayName: p.name.trim(),
         relationship:
@@ -142,7 +142,7 @@ export async function extractAndStoreMemory(
       logger.warn({ err }, 'fact embed failed — storing without embedding');
     }
 
-    const mem = storage.memories.insert({
+    const mem = await storage.memories.insert({
       userId: input.userId,
       conversationId: input.conversationId,
       sourceMessageId: input.sourceMessageId,
@@ -159,9 +159,9 @@ export async function extractAndStoreMemory(
       try {
         const canonical = canonicalize(personName);
         const person =
-          storage.people.getByCanonical(input.userId, canonical) ??
-          storage.people.upsert({ userId: input.userId, displayName: personName });
-        storage.personMemories.link(person.id, mem.id);
+          await storage.people.getByCanonical(input.userId, canonical) ??
+          await storage.people.upsert({ userId: input.userId, displayName: personName });
+        await storage.personMemories.link(person.id, mem.id);
       } catch (err) {
         logger.warn({ err, personName }, 'person<->memory link failed');
       }
