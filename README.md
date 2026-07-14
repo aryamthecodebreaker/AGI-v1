@@ -20,6 +20,15 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
+## Example usage
+
+```bash
+# Run the word-count tool
+curl -X POST http://localhost:3000/run-tool/word-count -H 'Content-Type: application/json' -d '{\"text\":\"Hello world! This is a test.\"}'
+```
+
+The tool returns the number of words, e.g. `7`.
+
 The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for chat generation and Neon Postgres for shared storage. Pinning conversational models avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. If the primary free provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with owner-only, human-reviewed capability and source-improvement workflows.
