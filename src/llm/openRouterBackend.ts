@@ -9,14 +9,26 @@ const CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 interface OpenRouterError {
   code?: number | string;
   message?: string;
+  metadata?: { raw?: string };
 }
 
 interface OpenRouterChunk {
+  model?: string;
   error?: OpenRouterError;
   choices?: Array<{
     delta?: { content?: string | null };
     message?: { content?: string | null };
   }>;
+}
+
+class OpenRouterRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OpenRouterRequestError';
+  }
 }
 
 function requestBody(messages: ChatMessage[], opts: GenOpts, stream: boolean): Record<string, unknown> {
@@ -49,8 +61,30 @@ function parseDataLine(line: string): OpenRouterChunk | null {
 
 function throwChunkError(chunk: OpenRouterChunk): void {
   if (!chunk.error) return;
-  const code = chunk.error.code ? ` ${chunk.error.code}` : '';
-  throw new Error(`OpenRouter stream failed${code}: ${chunk.error.message ?? 'unknown error'}`);
+  const parsedCode = Number(chunk.error.code);
+  const status = Number.isFinite(parsedCode) ? parsedCode : 502;
+  const detail = chunk.error.metadata?.raw ?? chunk.error.message ?? 'unknown provider error';
+  throw new OpenRouterRequestError(status, `OpenRouter stream failed ${status}: ${detail.slice(0, 1_000)}`);
+}
+
+async function responseError(res: Response, operation: string): Promise<OpenRouterRequestError> {
+  const payload = await res.json().catch(() => ({})) as OpenRouterChunk;
+  const detail = payload.error?.metadata?.raw
+    ?? payload.error?.message
+    ?? `HTTP ${res.status}`;
+  return new OpenRouterRequestError(
+    res.status,
+    `${operation} failed ${res.status}: ${detail.slice(0, 1_000)}`,
+  );
+}
+
+function retryable(error: unknown): error is OpenRouterRequestError {
+  return error instanceof OpenRouterRequestError
+    && (error.status === 404
+      || error.status === 408
+      || error.status === 409
+      || error.status === 429
+      || error.status >= 500);
 }
 
 export class OpenRouterBackend implements LlmBackend {
@@ -59,6 +93,7 @@ export class OpenRouterBackend implements LlmBackend {
   constructor(
     private readonly apiKey: string,
     private readonly modelId: string,
+    private readonly fallbackModelIds: string[] = [],
   ) {
     this.name = `openrouter:${modelId}`;
   }
@@ -67,21 +102,30 @@ export class OpenRouterBackend implements LlmBackend {
     // Hosted API; there is no local model to warm up.
   }
 
-  async *generate(messages: ChatMessage[], opts: GenOpts = {}): AsyncIterable<string> {
+  private models(): string[] {
+    return Array.from(new Set([this.modelId, ...this.fallbackModelIds]));
+  }
+
+  private async *generateWithModel(
+    model: string,
+    messages: ChatMessage[],
+    opts: GenOpts,
+  ): AsyncIterable<string> {
     const res = await fetch(CHAT_COMPLETIONS_URL, {
       method: 'POST',
       headers: headers(this.apiKey),
-      body: JSON.stringify({ ...requestBody(messages, opts, true), model: this.modelId }),
+      body: JSON.stringify({ ...requestBody(messages, opts, true), model }),
       signal: opts.signal,
     });
     if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`OpenRouter stream failed: ${res.status} ${text}`);
+      throw await responseError(res, 'OpenRouter stream');
     }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let pending = '';
+    let sawContent = false;
+    let reportedModel = false;
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -95,8 +139,15 @@ export class OpenRouterBackend implements LlmBackend {
             const chunk = parseDataLine(line);
             if (chunk) {
               throwChunkError(chunk);
+              if (chunk.model && !reportedModel) {
+                logger.info({ requestedModel: model, selectedModel: chunk.model }, 'openrouter: model selected');
+                reportedModel = true;
+              }
               const text = chunk.choices?.[0]?.delta?.content;
-              if (text) yield text;
+              if (text) {
+                sawContent = true;
+                yield text;
+              }
             }
           } catch (err) {
             if (err instanceof SyntaxError) {
@@ -113,7 +164,10 @@ export class OpenRouterBackend implements LlmBackend {
         if (chunk) {
           throwChunkError(chunk);
           const text = chunk.choices?.[0]?.delta?.content;
-          if (text) yield text;
+          if (text) {
+            sawContent = true;
+            yield text;
+          }
         }
       }
     } finally {
@@ -123,22 +177,62 @@ export class OpenRouterBackend implements LlmBackend {
         /* ignore */
       }
     }
+    if (!sawContent) {
+      throw new OpenRouterRequestError(502, `OpenRouter stream failed 502: ${model} returned no text`);
+    }
+  }
+
+  async *generate(messages: ChatMessage[], opts: GenOpts = {}): AsyncIterable<string> {
+    const models = this.models();
+    let lastError: unknown;
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index]!;
+      let emitted = false;
+      try {
+        for await (const text of this.generateWithModel(model, messages, opts)) {
+          emitted = true;
+          yield text;
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        const nextModel = models[index + 1];
+        if (emitted || !nextModel || !retryable(error)) throw error;
+        logger.warn({ err: error, model, nextModel }, 'openrouter: retrying with fallback model');
+      }
+    }
+    throw lastError ?? new Error('OpenRouter stream failed without a model attempt');
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenOpts = {}): Promise<string> {
-    const res = await fetch(CHAT_COMPLETIONS_URL, {
-      method: 'POST',
-      headers: headers(this.apiKey),
-      body: JSON.stringify({ ...requestBody(messages, opts, false), model: this.modelId }),
-      signal: opts.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`OpenRouter request failed: ${res.status} ${text}`);
+    const models = this.models();
+    let lastError: unknown;
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index]!;
+      try {
+        const res = await fetch(CHAT_COMPLETIONS_URL, {
+          method: 'POST',
+          headers: headers(this.apiKey),
+          body: JSON.stringify({ ...requestBody(messages, opts, false), model }),
+          signal: opts.signal,
+        });
+        if (!res.ok) throw await responseError(res, 'OpenRouter request');
+        const json = (await res.json()) as OpenRouterChunk;
+        throwChunkError(json);
+        const content = json.choices?.[0]?.message?.content?.trim() ?? '';
+        if (!content) {
+          throw new OpenRouterRequestError(502, `OpenRouter request failed 502: ${model} returned no text`);
+        }
+        logger.info({ requestedModel: model, selectedModel: json.model }, 'openrouter: model selected');
+        return content;
+      } catch (error) {
+        lastError = error;
+        const nextModel = models[index + 1];
+        if (!nextModel || !retryable(error)) throw error;
+        logger.warn({ err: error, model, nextModel }, 'openrouter: retrying request with fallback model');
+      }
     }
-    const json = (await res.json()) as OpenRouterChunk;
-    throwChunkError(json);
-    return json.choices?.[0]?.message?.content?.trim() ?? '';
+    throw lastError ?? new Error('OpenRouter request failed without a model attempt');
   }
 }
 
@@ -151,6 +245,10 @@ export function getOpenRouterBackend(): OpenRouterBackend {
       'LLM_BACKEND=openrouter but OPENROUTER_API_KEY is not set. Add it to .env (local) or the platform env vars.',
     );
   }
-  cached = new OpenRouterBackend(config.openRouterApiKey, config.llmModelId);
+  cached = new OpenRouterBackend(
+    config.openRouterApiKey,
+    config.llmModelId,
+    config.openRouterFallbackModelIds,
+  );
   return cached;
 }
