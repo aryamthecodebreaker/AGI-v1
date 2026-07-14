@@ -169,4 +169,27 @@ describe('OpenRouter conversational fallbacks', () => {
       .resolves.toBe('generated draft');
     expect(requestedModels).toEqual(['retired:free', 'fallback:free']);
   });
+
+  it('uses the free router after every explicit background-task model fails', async () => {
+    const requestedModels: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      requestedModels.push(body.model);
+      if (body.model !== 'openrouter/free') {
+        return new Response(JSON.stringify({ error: { message: 'provider unavailable' } }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        model: 'selected-task-model:free',
+        choices: [{ message: { content: '{"facts":[]}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free', ['fallback:free']);
+    await expect(backend.generateOnce([{ role: 'user', content: 'extract facts' }]))
+      .resolves.toBe('{"facts":[]}');
+    expect(requestedModels).toEqual(['primary:free', 'fallback:free', 'openrouter/free']);
+  });
 });

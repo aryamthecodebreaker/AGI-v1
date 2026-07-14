@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for ordinary chat, the tool-capable `openrouter/free` router for model-controlled web search, and Neon Postgres for shared storage. Restricting the free router to tool-enabled requests prevents ordinary chat from randomly selecting a specialist model, such as a content-safety classifier, while letting OpenRouter filter for a model that supports the requested server tool. If the primary conversational provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for ordinary chat, the tool-capable `openrouter/free` router for model-controlled web search, and Neon Postgres for shared storage. Ordinary chat never uses the random router. Schema-validated background tasks may use it only as a final fallback after every explicit provider fails; malformed extraction or proposal output is still rejected. If the primary conversational provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -127,6 +127,7 @@ LLM_BACKEND=openrouter
 LLM_MODEL_ID=qwen/qwen3-next-80b-a3b-instruct:free
 OPENROUTER_API_KEY=your_server_side_key
 OPENROUTER_FALLBACK_MODEL_IDS=meta-llama/llama-3.3-70b-instruct:free,google/gemma-4-31b-it:free
+OPENROUTER_TASK_FALLBACK_MODEL_ID=openrouter/free
 OPENROUTER_WEB_SEARCH_MODEL_ID=openrouter/free
 ```
 
@@ -150,6 +151,7 @@ The repository includes `vercel.json`. The deployed project needs:
 - `OPENROUTER_API_KEY` for the checked-in Vercel OpenRouter configuration.
 - Optional `OPENROUTER_WEB_SEARCH_ENABLED=false` to disable paid web searches; it defaults to enabled for the OpenRouter backend.
 - Optional `OPENROUTER_WEB_SEARCH_MODEL_ID` to override the tool-capable search route; it defaults to `openrouter/free` and does not affect ordinary chat.
+- Optional `OPENROUTER_TASK_FALLBACK_MODEL_ID` for schema-validated background calls after every explicit provider fails; it defaults to `openrouter/free` and does not affect ordinary streamed chat.
 - A Neon integration that provides `DATABASE_URL`.
 
 Without `DATABASE_URL`, Vercel falls back to a SQLite file under `/tmp`. That storage is per-instance and ephemeral, so signup may appear to work and a later authenticated request may return HTTP 401 from another instance. Use shared Postgres for any multi-instance deployment.

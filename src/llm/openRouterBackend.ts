@@ -139,6 +139,7 @@ export class OpenRouterBackend implements LlmBackend {
     private readonly fallbackModelIds: string[] = [],
     webSearchEnabled = true,
     private readonly webSearchModelId = 'openrouter/free',
+    private readonly taskFallbackModelId = 'openrouter/free',
   ) {
     this.name = `openrouter:${modelId}`;
     this.supportsWebSearch = webSearchEnabled;
@@ -148,9 +149,13 @@ export class OpenRouterBackend implements LlmBackend {
     // Hosted API; there is no local model to warm up.
   }
 
-  private models(opts: GenOpts): string[] {
+  private models(opts: GenOpts, includeTaskFallback = false): string[] {
     if (opts.webSearch) return [this.webSearchModelId];
-    return Array.from(new Set([this.modelId, ...this.fallbackModelIds]));
+    return Array.from(new Set([
+      this.modelId,
+      ...this.fallbackModelIds,
+      ...(includeTaskFallback ? [this.taskFallbackModelId] : []),
+    ]));
   }
 
   private async *generateWithModel(
@@ -261,7 +266,11 @@ export class OpenRouterBackend implements LlmBackend {
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenOpts = {}): Promise<string> {
-    const models = this.models(opts);
+    // Single-shot calls power background extraction, classification, and
+    // validated proposal drafts. If every pinned provider is unavailable,
+    // the free router is a final chance to complete the task; downstream
+    // schemas and static validation still reject malformed output.
+    const models = this.models(opts, true);
     let lastError: unknown;
     for (let index = 0; index < models.length; index++) {
       const model = models[index]!;
@@ -307,6 +316,7 @@ export function getOpenRouterBackend(): OpenRouterBackend {
     config.openRouterFallbackModelIds,
     config.openRouterWebSearchEnabled,
     config.openRouterWebSearchModelId,
+    config.openRouterTaskFallbackModelId,
   );
   return cached;
 }
