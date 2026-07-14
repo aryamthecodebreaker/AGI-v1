@@ -172,9 +172,11 @@ describe('OpenRouter conversational fallbacks', () => {
 
   it('uses the free router after every explicit background-task model fails', async () => {
     const requestedModels: string[] = [];
+    const requestBodies: Array<Record<string, unknown>> = [];
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { model: string };
+      const body = JSON.parse(String(init?.body)) as { model: string } & Record<string, unknown>;
       requestedModels.push(body.model);
+      requestBodies.push(body);
       if (body.model !== 'openrouter/free') {
         return new Response(JSON.stringify({ error: { message: 'provider unavailable' } }), {
           status: 429,
@@ -188,8 +190,14 @@ describe('OpenRouter conversational fallbacks', () => {
     }));
 
     const backend = new OpenRouterBackend('test-key', 'primary:free', ['fallback:free']);
-    await expect(backend.generateOnce([{ role: 'user', content: 'extract facts' }]))
+    await expect(backend.generateOnce(
+      [{ role: 'user', content: 'extract facts as a JSON object' }],
+      { jsonObject: true },
+    ))
       .resolves.toBe('{"facts":[]}');
     expect(requestedModels).toEqual(['primary:free', 'fallback:free', 'openrouter/free']);
+    expect(requestBodies.every((body) => (
+      JSON.stringify(body.response_format) === JSON.stringify({ type: 'json_object' })
+    ))).toBe(true);
   });
 });

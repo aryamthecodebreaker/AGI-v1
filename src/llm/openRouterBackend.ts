@@ -60,6 +60,9 @@ function requestBody(messages: ChatMessage[], opts: GenOpts, stream: boolean): R
       },
     }];
   }
+  if (opts.jsonObject) {
+    body.response_format = { type: 'json_object' };
+  }
   return body;
 }
 

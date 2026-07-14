@@ -14,6 +14,8 @@ export interface GenOpts {
   topP?: number;
   topK?: number;
   repetitionPenalty?: number;
+  /** Require a JSON object response for schema-validated background tasks. */
+  jsonObject?: boolean;
   /** Let the hosted model decide when current web information is required. */
   webSearch?: {
     maxResults: number;
