@@ -1,6 +1,8 @@
 // AGI-v1 frontend — vanilla JS, no build step.
 // Handles auth, conversation list, SSE chat streaming, people/memories tabs.
 
+import { parseMessageSegments } from './messageLinks.js';
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -189,27 +191,18 @@ $('#new-chat').addEventListener('click', async () => {
 // ---------- Messages ----------
 function renderMessageContent(element, content) {
   element.textContent = '';
-  const pattern = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
-  let cursor = 0;
-  for (const match of content.matchAll(pattern)) {
-    const index = match.index ?? 0;
-    element.appendChild(document.createTextNode(content.slice(cursor, index)));
-    const rawUrl = match[2] || match[3];
-    try {
-      const url = new URL(rawUrl);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported link');
+  for (const segment of parseMessageSegments(content)) {
+    if (segment.url) {
       const link = document.createElement('a');
-      link.href = url.href;
+      link.href = segment.url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = match[1] || rawUrl;
+      link.textContent = segment.text;
       element.appendChild(link);
-    } catch {
-      element.appendChild(document.createTextNode(match[0]));
+    } else {
+      element.appendChild(document.createTextNode(segment.text));
     }
-    cursor = index + match[0].length;
   }
-  element.appendChild(document.createTextNode(content.slice(cursor)));
 }
 
 function addBubble(role, content) {

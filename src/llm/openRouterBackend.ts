@@ -109,6 +109,9 @@ function retryable(error: unknown): error is OpenRouterRequestError {
 }
 
 function appendMissingCitations(content: string, chunk: OpenRouterChunk): string {
+  // If the model already supplied a source URL, preserve its curated answer.
+  // Raw annotations can include search candidates that were not actually used.
+  if (/https?:\/\//i.test(content)) return content;
   const citations = chunk.choices?.[0]?.message?.annotations
     ?.filter((annotation) => annotation.type === 'url_citation')
     .map((annotation) => annotation.url_citation)
