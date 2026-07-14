@@ -40,6 +40,34 @@ interface ExtractedPayload {
   facts: ExtractedFact[];
 }
 
+const SENSITIVE_SELF_FACT_LABEL = /\b(?:password|passcode|pin|api\s*key|access\s*token|secret|credit\s*card|cvv)\b/i;
+
+/**
+ * Conservative, source-only fallback for explicit first-person facts. This is
+ * intentionally narrower than the LLM extractor: it only accepts clauses in
+ * the form "my <attribute> is/are <value>", and never stores common secrets.
+ * It gives durable memory a deterministic path when a free model returns an
+ * empty or malformed extraction response.
+ */
+export function extractExplicitSelfFacts(message: string): ExtractedFact[] {
+  const facts: ExtractedFact[] = [];
+  const clause = /\bmy\s+([\p{L}\p{N}][\p{L}\p{N}' -]{0,60}?)\s+(is|are)\s+(.+?)(?=\s*[,;]\s*(?:(?:and|but)\s+)?(?:my|I)\b|\s+(?:and|but)\s+(?:my|I)\b|[.!?\n]|$)/giu;
+
+  for (const match of message.matchAll(clause)) {
+    const attribute = match[1]?.trim().replace(/\s+/g, ' ');
+    const verb = match[2]?.toLowerCase();
+    const value = match[3]?.trim().replace(/\s+/g, ' ');
+    if (!attribute || !verb || !value || value.length > 120) continue;
+    if (SENSITIVE_SELF_FACT_LABEL.test(attribute)) continue;
+    facts.push({
+      fact: `The user's ${attribute} ${verb} ${value}.`,
+      people: [],
+    });
+  }
+
+  return facts;
+}
+
 // Names/tokens the LLM tends to invent instead of extracting.
 const NAME_STOPWORDS = new Set([
   'you','me','user','i','he','she','they','them','him','her','someone','anyone',
@@ -82,13 +110,15 @@ export async function extractAndStoreMemory(
 
   const payload = parseExtraction(raw);
   if (!payload) {
-    logger.debug({ raw }, 'memory extraction: no parseable JSON');
-    return;
+    logger.warn(
+      { responseLength: raw.length },
+      'memory extraction response was not parseable; trying source-only fallback',
+    );
   }
 
   // --- People ---
   const userLower = input.userMessage.toLowerCase();
-  const groundedPeople = payload.people.filter((p) => {
+  const groundedPeople = (payload?.people ?? []).filter((p) => {
     const name = (p.name || '').trim();
     if (!name) return false;
     if (NAME_STOPWORDS.has(name.toLowerCase())) return false;
@@ -119,7 +149,7 @@ export async function extractAndStoreMemory(
   const sourceTokensLower = new Set(
     input.userMessage.split(/[^\p{L}\p{N}]+/u).map((t) => t.toLowerCase()),
   );
-  const groundedFacts = payload.facts.filter((f) => {
+  const groundedFacts = (payload?.facts ?? []).filter((f) => {
     const tokens = f.fact.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     const distinctive = tokens.filter(
       (t) => /^\d+$/.test(t) || (/^[A-Z]/.test(t) && !FACT_STOPWORDS.has(t)),
@@ -135,7 +165,17 @@ export async function extractAndStoreMemory(
     return true;
   });
 
-  for (const f of groundedFacts) {
+  const factsToStore = groundedFacts.length > 0
+    ? groundedFacts
+    : extractExplicitSelfFacts(input.userMessage);
+  if (groundedFacts.length === 0 && factsToStore.length > 0) {
+    logger.info(
+      { count: factsToStore.length },
+      'memory extraction used source-only explicit-fact fallback',
+    );
+  }
+
+  for (const f of factsToStore) {
     const content = f.fact.trim();
     if (!content) continue;
 
