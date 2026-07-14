@@ -17,7 +17,16 @@ interface OpenRouterChunk {
   error?: OpenRouterError;
   choices?: Array<{
     delta?: { content?: string | null };
-    message?: { content?: string | null };
+    message?: {
+      content?: string | null;
+      annotations?: Array<{
+        type?: string;
+        url_citation?: {
+          url?: string;
+          title?: string;
+        };
+      }>;
+    };
   }>;
 }
 
@@ -99,6 +108,24 @@ function retryable(error: unknown): error is OpenRouterRequestError {
       || error.status >= 500);
 }
 
+function appendMissingCitations(content: string, chunk: OpenRouterChunk): string {
+  const citations = chunk.choices?.[0]?.message?.annotations
+    ?.filter((annotation) => annotation.type === 'url_citation')
+    .map((annotation) => annotation.url_citation)
+    .filter((citation): citation is { url: string; title?: string } => Boolean(citation?.url))
+    ?? [];
+  const missing = Array.from(
+    new Map(citations.map((citation) => [citation.url, citation])).values(),
+  ).filter((citation) => !content.includes(citation.url));
+  if (missing.length === 0) return content;
+  return `${content}\n\nSources:\n${missing
+    .map((citation) => {
+      const label = citation.title?.replace(/[\[\]\r\n]/g, ' ').trim() || citation.url;
+      return `- [${label}](${citation.url})`;
+    })
+    .join('\n')}`;
+}
+
 export class OpenRouterBackend implements LlmBackend {
   readonly name: string;
   readonly supportsWebSearch: boolean;
@@ -108,6 +135,7 @@ export class OpenRouterBackend implements LlmBackend {
     private readonly modelId: string,
     private readonly fallbackModelIds: string[] = [],
     webSearchEnabled = true,
+    private readonly webSearchModelId = 'openrouter/free',
   ) {
     this.name = `openrouter:${modelId}`;
     this.supportsWebSearch = webSearchEnabled;
@@ -117,7 +145,8 @@ export class OpenRouterBackend implements LlmBackend {
     // Hosted API; there is no local model to warm up.
   }
 
-  private models(): string[] {
+  private models(opts: GenOpts): string[] {
+    if (opts.webSearch) return [this.webSearchModelId];
     return Array.from(new Set([this.modelId, ...this.fallbackModelIds]));
   }
 
@@ -198,7 +227,16 @@ export class OpenRouterBackend implements LlmBackend {
   }
 
   async *generate(messages: ChatMessage[], opts: GenOpts = {}): AsyncIterable<string> {
-    const models = this.models();
+    // OpenRouter's free router filters for models that support the requested
+    // server tools. Use its non-streaming path for web search so annotations
+    // can be preserved as source links. Ordinary chat remains streamed through
+    // the explicitly configured conversational model fallbacks.
+    if (opts.webSearch) {
+      yield await this.generateOnce(messages, opts);
+      return;
+    }
+
+    const models = this.models(opts);
     let lastError: unknown;
     for (let index = 0; index < models.length; index++) {
       const model = models[index]!;
@@ -220,7 +258,7 @@ export class OpenRouterBackend implements LlmBackend {
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenOpts = {}): Promise<string> {
-    const models = this.models();
+    const models = this.models(opts);
     let lastError: unknown;
     for (let index = 0; index < models.length; index++) {
       const model = models[index]!;
@@ -239,7 +277,7 @@ export class OpenRouterBackend implements LlmBackend {
           throw new OpenRouterRequestError(502, `OpenRouter request failed 502: ${model} returned no text`);
         }
         logger.info({ requestedModel: model, selectedModel: json.model }, 'openrouter: model selected');
-        return content;
+        return appendMissingCitations(content, json);
       } catch (error) {
         lastError = error;
         const nextModel = models[index + 1];
@@ -265,6 +303,7 @@ export function getOpenRouterBackend(): OpenRouterBackend {
     config.llmModelId,
     config.openRouterFallbackModelIds,
     config.openRouterWebSearchEnabled,
+    config.openRouterWebSearchModelId,
   );
   return cached;
 }
