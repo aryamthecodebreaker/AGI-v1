@@ -80,6 +80,53 @@ describe('OpenRouter conversational fallbacks', () => {
     )).resolves.toBe('Source: https://amy-tutor.vercel.app/');
   });
 
+  it('falls back to conversational models when web search returns no text', async () => {
+    const requests: Array<{
+      model: string;
+      stream: boolean;
+      tools?: unknown;
+      messages: Array<{ role: string; content: string }>;
+    }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as typeof requests[number];
+      requests.push(body);
+      if (body.model === 'openrouter/free') {
+        return new Response(JSON.stringify({
+          model: 'empty-tool-model:free',
+          choices: [{ message: { content: '' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return streamResponse([
+        JSON.stringify({ model: body.model, choices: [{ delta: { content: 'CHAT_FALLBACK_OK' } }] }),
+        '[DONE]',
+      ]);
+    }));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free', ['fallback:free']);
+    let response = '';
+    for await (const chunk of backend.generate(
+      [{ role: 'user', content: 'hello' }],
+      {
+        webSearch: {
+          maxResults: 3,
+          maxTotalResults: 3,
+          maxCharactersPerResult: 2_500,
+        },
+      },
+    )) {
+      response += chunk;
+    }
+
+    expect(response).toBe('CHAT_FALLBACK_OK');
+    expect(requests.map((request) => request.model)).toEqual([
+      'openrouter/free',
+      'primary:free',
+    ]);
+    expect(requests[0]?.tools).toBeDefined();
+    expect(requests[1]?.tools).toBeUndefined();
+    expect(requests[1]?.messages.at(-1)?.content).toMatch(/do not invent sources/i);
+  });
+
   it('keeps configured conversational models for requests without web search', async () => {
     let request: Record<string, unknown> | undefined;
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
