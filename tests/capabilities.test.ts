@@ -6,8 +6,11 @@ import { assertCapabilityAdmin } from '../src/capabilities/config.js';
 import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
 import {
+  applyImprovementReplacements,
   extractImprovementPatch,
+  generateImprovementProposal,
   validateImprovementPatch,
+  validateImprovementProposal,
 } from '../src/capabilities/improvement.js';
 import { shouldAbortStreamOnResponseClose } from '../src/http/routes/chat.js';
 import type { ChatMessage, LlmBackend } from '../src/llm/types.js';
@@ -94,6 +97,66 @@ new file mode 100644
   it('requires a regression test for executable changes', () => {
     expect(() => validateImprovementPatch(safePatch.split('diff --git a/tests/')[0]!))
       .toThrow(/must include a regression test/);
+  });
+
+  it('materializes exact structured replacements without model-generated diff metadata', () => {
+    const proposal = validateImprovementProposal({
+      changes: [{
+        path: 'README.md',
+        replacements: [{ oldText: 'Old guidance', newText: 'New guidance' }],
+      }],
+    });
+    expect(proposal[0]?.path).toBe('README.md');
+    expect(applyImprovementReplacements(
+      'Before\nOld guidance\nAfter\n',
+      [{ oldText: 'Old guidance', newText: 'New guidance' }],
+    )).toBe('Before\nNew guidance\nAfter\n');
+  });
+
+  it('rejects ambiguous replacements and protected structured edits', () => {
+    expect(() => applyImprovementReplacements(
+      'same\nsame\n',
+      [{ oldText: 'same', newText: 'changed' }],
+    )).toThrow(/ambiguous/);
+    expect(() => validateImprovementProposal({
+      changes: [{
+        path: 'src/capabilities/improvement.ts',
+        replacements: [{ oldText: 'before', newText: 'after' }],
+      }],
+    })).toThrow(/protected or unsupported path/);
+    expect(() => validateImprovementProposal({
+      changes: [{
+        path: 'src/brain/example.ts',
+        replacements: [{ oldText: 'before', newText: 'after' }],
+      }],
+    })).toThrow(/must include a regression test/);
+  });
+
+  it('parses a strict JSON proposal and includes repair feedback', async () => {
+    const calls: ChatMessage[][] = [];
+    const backend: LlmBackend = {
+      name: 'test-improvement-proposal',
+      async ready() {},
+      async *generate() {},
+      async generateOnce(messages) {
+        calls.push(messages);
+        return JSON.stringify({
+          changes: [{
+            path: 'README.md',
+            replacements: [{ oldText: 'Old guidance', newText: 'New guidance' }],
+          }],
+        });
+      },
+    };
+
+    await expect(generateImprovementProposal(
+      'Improve the README guidance',
+      '===== README.md =====\nOld guidance',
+      backend,
+      'oldText was not found',
+    )).resolves.toHaveLength(1);
+    expect(calls[0]?.[0]?.content).toContain('exactly one JSON object');
+    expect(calls[0]?.[1]?.content).toContain('corrected complete JSON proposal');
   });
 });
 

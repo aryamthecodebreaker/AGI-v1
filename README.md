@@ -77,8 +77,8 @@ Generated tools intentionally cannot access the network, files, production secre
 1. A fresh Vercel Sandbox clones the public `main` branch and installs its already-reviewed dependencies without receiving application or GitHub credentials.
 2. Sandbox egress is switched to `deny-all`.
 3. FixMap 0.3.1 ranks the repository files and test route relevant to the goal.
-4. The LLM receives that bounded context and returns a unified patch. Static rules block dependency, auth, storage-migration, command-router/server, publishing, sandbox, and self-improvement-guardrail changes.
-5. Executable patches must include regression tests. Git validates the patch, then the sandbox runs `npm test` and `npm run build` without network access.
+4. The LLM receives that bounded context and returns strict JSON containing exact, unique text replacements for existing files or complete contents for new files. AGI-v1 materializes the proposal and generates the Git diff itself, avoiding model-invented line numbers and malformed patch headers. Static rules block dependency, auth, storage-migration, command-router/server, publishing, sandbox, and self-improvement-guardrail changes.
+5. Executable proposals must include regression tests. Git validates the generated diff, then the sandbox runs `npm test` and `npm run build` without network access.
 6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.
 
 The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without an explicit owner request and human review.
