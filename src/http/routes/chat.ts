@@ -11,13 +11,17 @@ import { startSse } from '../sse.js';
 import { logger } from '../../logger.js';
 import { parseCapabilityCommand } from '../../capabilities/commands.js';
 import { assertCapabilityAdmin } from '../../capabilities/config.js';
-import { buildCapability, runMergedCapability } from '../../capabilities/service.js';
+import { buildCapability, improveSource, runMergedCapability } from '../../capabilities/service.js';
 import { Errors } from '../../util/errors.js';
 
 const chatSchema = z.object({
   conversationId: z.string().min(1),
   content: z.string().min(1).max(8000),
 });
+
+export function shouldAbortStreamOnResponseClose(writableEnded: boolean): boolean {
+  return !writableEnded;
+}
 
 export async function chatRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
   const auth = requireAuth(storage);
@@ -60,16 +64,32 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
       const sse = startSse(reply);
       sse.comment(capabilityCommand.type === 'build'
         ? 'generating and validating capability'
-        : 'running merged capability in sandbox');
+        : capabilityCommand.type === 'improve'
+          ? 'mapping, generating, and validating source improvement'
+          : 'running merged capability in sandbox');
       try {
-        const responseText = capabilityCommand.type === 'build'
-          ? await buildCapability(storage, user.id, capabilityCommand.task).then((result) => [
+        let responseText: string;
+        if (capabilityCommand.type === 'build') {
+          responseText = await buildCapability(storage, user.id, capabilityCommand.task).then((result) => [
               `Built and tested ${result.slug} in a network-denied sandbox.`,
               `Sample output: ${result.sampleOutput}`,
               `Draft PR: ${result.prUrl}`,
               'It cannot modify or merge main; review and merge the PR before using /run-tool.',
-            ].join('\n'))
-          : await runMergedCapability(user.id, capabilityCommand.slug, capabilityCommand.input);
+            ].join('\n'));
+        } else if (capabilityCommand.type === 'improve') {
+          responseText = await improveSource(storage, user.id, capabilityCommand.task).then((result) => [
+            result.fixMapSummary,
+            `Changed files: ${result.changedFiles.join(', ')}`,
+            `Draft PR: ${result.prUrl}`,
+            'The patch passed tests and build in a network-denied sandbox. It cannot merge itself.',
+          ].join('\n'));
+        } else {
+          responseText = await runMergedCapability(
+            user.id,
+            capabilityCommand.slug,
+            capabilityCommand.input,
+          );
+        }
 
         await storage.messages.insert({
           conversationId: body.conversationId,
@@ -95,9 +115,12 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     // Propagate client-side disconnects into the orchestrator so we can stop
     // generating tokens as soon as the browser closes the connection.
     const abortController = new AbortController();
-    req.raw.on('close', () => {
-      abortController.abort();
-    });
+    const onResponseClose = () => {
+      if (shouldAbortStreamOnResponseClose(reply.raw.writableEnded)) {
+        abortController.abort();
+      }
+    };
+    reply.raw.on('close', onResponseClose);
 
     try {
       for await (const event of orchestrator.handleUserMessage({
@@ -115,6 +138,7 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
       logger.error({ err }, 'chat stream failed');
       sse.send({ error: (err as Error).message });
     } finally {
+      reply.raw.off('close', onResponseClose);
       sse.done();
     }
   });

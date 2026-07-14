@@ -1,5 +1,6 @@
 export type CapabilityCommand =
   | { type: 'build'; task: string }
+  | { type: 'improve'; task: string }
   | { type: 'run'; slug: string; input: unknown };
 
 export function parseCapabilityCommand(content: string): CapabilityCommand | null {
@@ -10,6 +11,15 @@ export function parseCapabilityCommand(content: string): CapabilityCommand | nul
       throw new Error('/build-tool requires a task between 10 and 2,000 characters');
     }
     return { type: 'build', task };
+  }
+
+  const improve = content.match(/^\/improve-self\s+([\s\S]+)$/i);
+  if (improve) {
+    const task = improve[1]!.trim();
+    if (task.length < 15 || task.length > 2_000) {
+      throw new Error('/improve-self requires a goal between 15 and 2,000 characters');
+    }
+    return { type: 'improve', task };
   }
 
   const run = content.match(/^\/run-tool\s+([a-z][a-z0-9-]{2,39})(?:\s+([\s\S]+))?$/i);
