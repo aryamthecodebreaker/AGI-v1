@@ -15,6 +15,7 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_FALLBACK_MODEL_IDS: z.string().default(''),
+  OPENROUTER_TASK_FALLBACK_MODEL_ID: z.string().trim().min(1).default('openrouter/free'),
   OPENROUTER_WEB_SEARCH_MODEL_ID: z.string().trim().min(1).default('openrouter/free'),
   OPENROUTER_WEB_SEARCH_ENABLED: z.string().default('true')
     .transform((value) => value.trim().toLowerCase() === 'true'),
@@ -98,6 +99,7 @@ export const config = {
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean),
+  openRouterTaskFallbackModelId: parsed.OPENROUTER_TASK_FALLBACK_MODEL_ID,
   openRouterWebSearchModelId: parsed.OPENROUTER_WEB_SEARCH_MODEL_ID,
   openRouterWebSearchEnabled: parsed.OPENROUTER_WEB_SEARCH_ENABLED,
   logLevel: parsed.LOG_LEVEL,
