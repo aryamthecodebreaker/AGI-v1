@@ -17,10 +17,18 @@ describe('OpenRouter conversational fallbacks', () => {
     let request: Record<string, unknown> | undefined;
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
       request = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return streamResponse([
-        JSON.stringify({ choices: [{ delta: { content: 'SEARCH_OK' } }] }),
-        '[DONE]',
-      ]);
+      return new Response(JSON.stringify({
+        model: 'tool-capable:free',
+        choices: [{
+          message: {
+            content: 'SEARCH_OK',
+            annotations: [{
+              type: 'url_citation',
+              url_citation: { url: 'https://example.com/result', title: 'Example result' },
+            }],
+          },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }));
 
     const backend = new OpenRouterBackend('test-key', 'primary:free');
@@ -38,7 +46,9 @@ describe('OpenRouter conversational fallbacks', () => {
       response += chunk;
     }
 
-    expect(response).toBe('SEARCH_OK');
+    expect(response).toBe('SEARCH_OK\n\nSources:\n- [Example result](https://example.com/result)');
+    expect(request?.model).toBe('openrouter/free');
+    expect(request?.stream).toBe(false);
     expect(request?.tools).toEqual([{
       type: 'openrouter:web_search',
       parameters: {
@@ -48,6 +58,28 @@ describe('OpenRouter conversational fallbacks', () => {
         max_characters: 2_500,
       },
     }]);
+  });
+
+  it('keeps configured conversational models for requests without web search', async () => {
+    let request: Record<string, unknown> | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        JSON.stringify({ choices: [{ delta: { content: 'CHAT_OK' } }] }),
+        '[DONE]',
+      ]);
+    }));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free');
+    let response = '';
+    for await (const chunk of backend.generate([{ role: 'user', content: 'hello' }])) {
+      response += chunk;
+    }
+
+    expect(response).toBe('CHAT_OK');
+    expect(request?.model).toBe('primary:free');
+    expect(request?.stream).toBe(true);
+    expect(request?.tools).toBeUndefined();
   });
 
   it('retries a rate-limited model before any text is emitted', async () => {

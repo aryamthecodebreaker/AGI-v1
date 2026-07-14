@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for chat generation, model-controlled web search, and Neon Postgres for shared storage. Pinning conversational models avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. If the primary free provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for ordinary chat, the tool-capable `openrouter/free` router for model-controlled web search, and Neon Postgres for shared storage. Restricting the free router to tool-enabled requests prevents ordinary chat from randomly selecting a specialist model, such as a content-safety classifier, while letting OpenRouter filter for a model that supports the requested server tool. If the primary conversational provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -98,7 +98,7 @@ The running app cannot push to `main`, merge a PR, edit its safeguards, access p
 | Hosted storage | Neon Postgres through `@neondatabase/serverless` |
 | Local/test storage | `better-sqlite3` with FTS5 |
 | Embeddings | `Xenova/all-MiniLM-L6-v2` through `@huggingface/transformers` |
-| Hosted LLM | OpenRouter API with ordered conversational free-model fallbacks and the `openrouter:web_search` server tool |
+| Hosted LLM | OpenRouter API with ordered conversational free-model fallbacks, a tool-capable free router for web requests, and the `openrouter:web_search` server tool |
 | Other LLM option | Google Gemini REST API |
 | Generated-code isolation | Vercel Sandbox |
 | Repository context map | FixMap 0.3.1 |
@@ -127,6 +127,7 @@ LLM_BACKEND=openrouter
 LLM_MODEL_ID=qwen/qwen3-next-80b-a3b-instruct:free
 OPENROUTER_API_KEY=your_server_side_key
 OPENROUTER_FALLBACK_MODEL_IDS=meta-llama/llama-3.3-70b-instruct:free,google/gemma-4-31b-it:free
+OPENROUTER_WEB_SEARCH_MODEL_ID=openrouter/free
 ```
 
 or:
@@ -148,6 +149,7 @@ The repository includes `vercel.json`. The deployed project needs:
 - `JWT_SECRET` with at least 32 random characters.
 - `OPENROUTER_API_KEY` for the checked-in Vercel OpenRouter configuration.
 - Optional `OPENROUTER_WEB_SEARCH_ENABLED=false` to disable paid web searches; it defaults to enabled for the OpenRouter backend.
+- Optional `OPENROUTER_WEB_SEARCH_MODEL_ID` to override the tool-capable search route; it defaults to `openrouter/free` and does not affect ordinary chat.
 - A Neon integration that provides `DATABASE_URL`.
 
 Without `DATABASE_URL`, Vercel falls back to a SQLite file under `/tmp`. That storage is per-instance and ephemeral, so signup may appear to work and a later authenticated request may return HTTP 401 from another instance. Use shared Postgres for any multi-instance deployment.
@@ -192,6 +194,7 @@ The integration tests create temporary data and remove it after the run. `.env.l
 
 - Every configured OpenRouter free-model variant can still be rate-limited at the same time. Fallback occurs only before any output is emitted, preventing a response from switching models midway through a sentence.
 - OpenRouter web search is model-controlled and currently adds search and context-token charges when the model invokes it. AGI-v1 caps a turn at three Exa results.
+- Tool-enabled web replies are returned after the bounded search completes instead of token-by-token so URL citation annotations can be retained as clickable source links.
 - The local embedding model can add cold-start time and memory usage.
 - Postgres vector search currently performs a bounded application-side scan instead of using `pgvector`.
 - Generated capabilities are deliberately limited to dependency-free, offline computation.
