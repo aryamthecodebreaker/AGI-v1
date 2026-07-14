@@ -31,12 +31,21 @@ export async function buildCapability(
   const request = await storage.capabilityRequests.create(userId, task);
   try {
     await storage.capabilityRequests.update(request.id, { status: 'generating' });
-    const draft = await generateCapabilityDraft(task);
+    let draft = await generateCapabilityDraft(task);
     await storage.capabilityRequests.update(request.id, {
       status: 'validating',
       slug: draft.slug,
     });
-    const sandbox = await validateAndExecuteInSandbox(draft);
+    let sandbox = await validateAndExecuteInSandbox(draft);
+    if (!sandbox.passed) {
+      await storage.capabilityRequests.update(request.id, { status: 'generating' });
+      draft = await generateCapabilityDraft(task, undefined, sandbox.testOutput);
+      await storage.capabilityRequests.update(request.id, {
+        status: 'validating',
+        slug: draft.slug,
+      });
+      sandbox = await validateAndExecuteInSandbox(draft);
+    }
     const sandboxSummary = [sandbox.testOutput, `Sample output: ${sandbox.sampleOutput}`]
       .filter(Boolean)
       .join('\n');

@@ -12,7 +12,7 @@ export interface CapabilityGitHubConfig {
 }
 
 function enabled(): boolean {
-  return process.env.CAPABILITY_BUILDER_ENABLED?.toLowerCase() === 'true';
+  return process.env.CAPABILITY_BUILDER_ENABLED?.trim().toLowerCase() === 'true';
 }
 
 function adminIds(): Set<string> {
