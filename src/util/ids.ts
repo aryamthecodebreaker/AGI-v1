@@ -16,4 +16,5 @@ export const ids = {
   memory: () => newId('mem'),
   person: () => newId('p'),
   session: () => newId('s'),
+  capabilityRequest: () => newId('cap'),
 };

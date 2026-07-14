@@ -159,7 +159,7 @@ export async function extractAndStoreFacts(
       logger.warn({ err }, 'fact embed failed — storing without embedding');
     }
 
-    const mem = storage.memories.insert({
+    const mem = await storage.memories.insert({
       userId: input.userId,
       conversationId: input.conversationId,
       sourceMessageId: input.sourceMessageId,
@@ -187,9 +187,9 @@ export async function extractAndStoreFacts(
       try {
         const canonical = canonicalize(personName);
         const person =
-          storage.people.getByCanonical(input.userId, canonical) ??
-          storage.people.upsert({ userId: input.userId, displayName: personName });
-        storage.personMemories.link(person.id, mem.id);
+          await storage.people.getByCanonical(input.userId, canonical) ??
+          await storage.people.upsert({ userId: input.userId, displayName: personName });
+        await storage.personMemories.link(person.id, mem.id);
       } catch (err) {
         logger.warn({ err, personName }, 'person<->memory link failed');
       }

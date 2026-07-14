@@ -38,10 +38,22 @@ export async function authRoutes(app: FastifyInstance, storage: Storage): Promis
     }
     const { username, password, displayName } = parsed.data;
 
-    if (storage.users.getByUsername(username)) throw Errors.conflict('Username already exists');
+    if (await storage.users.getByUsername(username)) throw Errors.conflict('Username already exists');
 
     const passwordHash = await hashPassword(password);
-    const user = storage.users.create({ username, passwordHash, displayName });
+    let user;
+    try {
+      user = await storage.users.create({ username, passwordHash, displayName });
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        ('code' in error && error.code === '23505')
+      ) {
+        throw Errors.conflict('Username already exists');
+      }
+      throw error;
+    }
     const token = signToken(user.id);
     reply.setCookie(AUTH_COOKIE, token, COOKIE_OPTS);
     return { id: user.id, username: user.username, displayName: user.display_name };
@@ -59,7 +71,7 @@ export async function authRoutes(app: FastifyInstance, storage: Storage): Promis
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) throw Errors.badRequest('Invalid credentials');
     const { username, password } = parsed.data;
-    const user = storage.users.getByUsername(username);
+    const user = await storage.users.getByUsername(username);
     if (!user) throw Errors.unauthorized('Invalid username or password');
     const ok = await verifyPassword(password, user.password_hash);
     if (!ok) throw Errors.unauthorized('Invalid username or password');

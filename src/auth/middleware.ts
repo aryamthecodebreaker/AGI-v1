@@ -23,7 +23,7 @@ export function requireAuth(storage: Storage) {
     if (!token) throw Errors.unauthorized();
     const payload = verifyToken(token);
     if (!payload) throw Errors.unauthorized('Invalid or expired token');
-    const user = storage.users.getById(payload.sub);
+    const user = await storage.users.getById(payload.sub);
     if (!user) throw Errors.unauthorized('User not found');
     request.user = user;
   };

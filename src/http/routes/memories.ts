@@ -23,7 +23,7 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
   app.get('/api/memories', { preHandler: auth }, async (req) => {
     const user = req.user!;
     const q = listQuery.parse(req.query);
-    const rows = storage.memories.listRecentByUser(user.id, q.limit);
+    const rows = await storage.memories.listRecentByUser(user.id, q.limit);
     const filtered = q.kind ? rows.filter((r) => r.kind === q.kind) : rows;
     return filtered.map((m) => ({
       id: m.id,
@@ -43,7 +43,7 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
     } catch {
       /* fall back to FTS-only if embeddings unavailable */
     }
-    const hits = storage.memories.hybridSearch(user.id, q.q, queryEmbedding, q.k);
+    const hits = await storage.memories.hybridSearch(user.id, q.q, queryEmbedding, q.k);
     return hits.map((h) => ({
       id: h.memory.id,
       kind: h.memory.kind,

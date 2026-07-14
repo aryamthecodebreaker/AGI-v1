@@ -76,7 +76,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       logger.debug({ userId, conversationId, len: content.length }, 'orchestrator: handle user msg');
 
       // 1. Persist user message.
-      const userMsg = storage.messages.insert({
+      const userMsg = await storage.messages.insert({
         conversationId,
         userId,
         role: 'user',
@@ -89,7 +89,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       //    embedding so FTS can find it.
       try {
         const vec = await embed(content);
-        storage.memories.insert({
+        await storage.memories.insert({
           userId,
           conversationId,
           sourceMessageId: userMsg.id,
@@ -99,7 +99,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
         });
       } catch (err) {
         logger.warn({ err }, 'user message embed failed — inserting without embedding');
-        storage.memories.insert({
+        await storage.memories.insert({
           userId,
           conversationId,
           sourceMessageId: userMsg.id,
@@ -109,11 +109,11 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       }
 
       // Bump conversation updated_at + title (first-message auto-title).
-      storage.conversations.touch(conversationId);
-      const existingTitle = storage.conversations.getById(conversationId)?.title;
+      await storage.conversations.touch(conversationId);
+      const existingTitle = (await storage.conversations.getById(conversationId))?.title;
       if (!existingTitle || existingTitle === 'New chat') {
         const title = content.split('\n')[0]!.slice(0, 60) || 'New chat';
-        storage.conversations.rename(conversationId, title);
+        await storage.conversations.rename(conversationId, title);
       }
 
       // 3. Retrieve context.
@@ -150,7 +150,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       const assistantText = assembled.trim() || '(no response)';
 
       // 5. Persist assistant reply.
-      const assistantMsg = storage.messages.insert({
+      const assistantMsg = await storage.messages.insert({
         conversationId,
         userId,
         role: 'assistant',
@@ -158,7 +158,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
       });
       try {
         const vec = await embed(assistantText);
-        storage.memories.insert({
+        await storage.memories.insert({
           userId,
           conversationId,
           sourceMessageId: assistantMsg.id,
@@ -168,7 +168,7 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
         });
       } catch (err) {
         logger.warn({ err }, 'assistant embed failed');
-        storage.memories.insert({
+        await storage.memories.insert({
           userId,
           conversationId,
           sourceMessageId: assistantMsg.id,
