@@ -11,12 +11,15 @@ vi.mock('../src/llm/embeddings.js', () => ({
   embed: vi.fn(async () => new Float32Array(384)),
 }));
 
-function extractionBackend(result: string): LlmBackend {
+function extractionBackend(result: string | Error): LlmBackend {
   return {
     name: 'test:extraction',
     ready: async () => {},
     generate: async function* () {},
-    generateOnce: async () => result,
+    generateOnce: async () => {
+      if (result instanceof Error) throw result;
+      return result;
+    },
   };
 }
 
@@ -50,9 +53,13 @@ describe('durable memory extraction fallback', () => {
     expect(extractExplicitSelfFacts('My API key is do-not-store-this.')).toEqual([]);
   });
 
-  it.each(['{"people":[],"facts":[]}', 'not valid JSON'])(
-    'stores explicit facts when the model extraction is empty or malformed: %s',
-    async (modelResult) => {
+  it.each([
+    ['empty', '{"people":[],"facts":[]}'],
+    ['malformed', 'not valid JSON'],
+    ['failed', new Error('provider unavailable')],
+  ] as const)(
+    'stores explicit facts when the model extraction is %s',
+    async (_case, modelResult) => {
       const user = storage.users.create({ username: `memory-${Math.random()}`, passwordHash: 'h' });
       const conversation = storage.conversations.create(user.id, 'Fallback test');
       const source = storage.messages.insert({
