@@ -89,7 +89,7 @@ Each user may have one active capability request at a time and may start at most
 
 The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without a signed-in user's request and human review.
 
-Hosted fact and people extraction is registered with Vercel's `waitUntil()` lifecycle API. The chat response can finish without waiting for extraction, while the function remains alive long enough to validate and store durable memories.
+Hosted fact and people extraction is registered with Vercel's `waitUntil()` lifecycle API. The chat response can finish without waiting for extraction, while the function remains alive long enough to validate and store durable memories. The unified extraction call requires JSON-object output so the free task fallback is limited to structured-output-capable models before AGI-v1 applies its own grounding checks.
 
 ## Tech stack
 

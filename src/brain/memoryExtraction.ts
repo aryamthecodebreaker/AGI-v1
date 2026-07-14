@@ -70,7 +70,11 @@ export async function extractAndStoreMemory(
 
   let raw: string;
   try {
-    raw = await llm.generateOnce(messages, { maxNewTokens: 320, temperature: 0.1 });
+    raw = await llm.generateOnce(messages, {
+      maxNewTokens: 320,
+      temperature: 0.1,
+      jsonObject: true,
+    });
   } catch (err) {
     logger.warn({ err }, 'memory extraction LLM call failed');
     return;
