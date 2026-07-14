@@ -147,7 +147,13 @@ export function createOrchestrator(storage: Storage, backend?: LlmBackend): Orch
         return;
       }
 
-      const assistantText = assembled.trim() || '(no response)';
+      const assistantText = assembled.trim();
+      if (!assistantText) {
+        const message = 'The model returned an empty response. Please try again.';
+        logger.warn({ userId, conversationId }, 'LLM generation returned no text');
+        yield { type: 'error', data: message };
+        return;
+      }
 
       // 5. Persist assistant reply.
       const assistantMsg = await storage.messages.insert({
