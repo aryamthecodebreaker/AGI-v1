@@ -60,6 +60,26 @@ describe('OpenRouter conversational fallbacks', () => {
     }]);
   });
 
+  it('does not append unused search candidates when the answer already cites a URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: 'Source: https://amy-tutor.vercel.app/',
+          annotations: [{
+            type: 'url_citation',
+            url_citation: { url: 'https://unrelated.example/', title: 'Unused result' },
+          }],
+        },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    const backend = new OpenRouterBackend('test-key', 'primary:free');
+    await expect(backend.generateOnce(
+      [{ role: 'user', content: 'search' }],
+      { webSearch: { maxResults: 3, maxTotalResults: 3, maxCharactersPerResult: 2_500 } },
+    )).resolves.toBe('Source: https://amy-tutor.vercel.app/');
+  });
+
   it('keeps configured conversational models for requests without web search', async () => {
     let request: Record<string, unknown> | undefined;
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
