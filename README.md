@@ -42,7 +42,7 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - A small framework-free web UI for conversations, people, and memories.
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
-- Explicit, owner-only `/build-tool` and `/run-tool` commands for sandboxed capability development.
+- Explicit, owner-only `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
 - An owner-only `/improve-self` command that uses FixMap, validates a proposed source patch offline, and opens a draft PR.
 
 ## Architecture
