@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../../auth/middleware.js';
-import { assertCapabilityAdmin } from '../../capabilities/config.js';
+import { assertCapabilityEnabled } from '../../capabilities/config.js';
 import { buildCapability } from '../../capabilities/service.js';
 import type { Storage } from '../../storage/index.js';
 
@@ -12,7 +12,7 @@ export async function capabilityRoutes(app: FastifyInstance, storage: Storage): 
 
   app.get('/api/capabilities', { preHandler: auth }, async (req) => {
     const user = req.user!;
-    assertCapabilityAdmin(user.id);
+    assertCapabilityEnabled();
     return await storage.capabilityRequests.listByUser(user.id);
   });
 

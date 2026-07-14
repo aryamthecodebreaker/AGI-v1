@@ -16,6 +16,7 @@ export const Errors = {
   forbidden: (msg = 'Forbidden') => new AppError('FORBIDDEN', msg, 403),
   notFound: (msg = 'Not found') => new AppError('NOT_FOUND', msg, 404),
   conflict: (msg = 'Conflict') => new AppError('CONFLICT', msg, 409),
+  rateLimited: (msg = 'Too many requests') => new AppError('RATE_LIMITED', msg, 429),
   badRequest: (msg = 'Bad request', details?: unknown) =>
     new AppError('BAD_REQUEST', msg, 400, details),
   internal: (msg = 'Internal error') => new AppError('INTERNAL', msg, 500),

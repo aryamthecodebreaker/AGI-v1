@@ -1,5 +1,7 @@
 import type { Storage } from '../storage/index.js';
-import { assertCapabilityAdmin, getCapabilityGitHubConfig } from './config.js';
+import type { CapabilityRequestRow } from '../storage/repositories/capabilityRequestRepo.js';
+import { Errors } from '../util/errors.js';
+import { assertCapabilityEnabled, getCapabilityGitHubConfig } from './config.js';
 import { assertSafeCapabilityCode, generateCapabilityDraft } from './draft.js';
 import { fetchMergedCapabilityCode, publishCapabilityDraft } from './github.js';
 import { publishSourceImprovement } from './github.js';
@@ -9,8 +11,41 @@ import {
   validateAndExecuteInSandbox,
 } from './sandbox.js';
 
+const CREATION_WINDOW_MS = 60 * 60 * 1_000;
+const MAX_CREATIONS_PER_WINDOW = 2;
+const ACTIVE_REQUEST_TIMEOUT_MS = 15 * 60 * 1_000;
+const ACTIVE_STATUSES = new Set(['pending', 'generating', 'validating']);
+
 function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 4_000);
+}
+
+export function assertCapabilityCreationQuota(
+  requests: CapabilityRequestRow[],
+  currentTime = Date.now(),
+): void {
+  const activeCutoff = currentTime - ACTIVE_REQUEST_TIMEOUT_MS;
+  const hasActiveRequest = requests.some((request) =>
+    ACTIVE_STATUSES.has(request.status) && request.updated_at >= activeCutoff);
+  if (hasActiveRequest) {
+    throw Errors.conflict('Finish the active capability request before starting another');
+  }
+
+  const windowCutoff = currentTime - CREATION_WINDOW_MS;
+  const recentCreations = requests.filter((request) => request.created_at >= windowCutoff);
+  if (recentCreations.length >= MAX_CREATIONS_PER_WINDOW) {
+    throw Errors.rateLimited('Capability creation is limited to 2 requests per user per hour');
+  }
+}
+
+async function createCapabilityRequest(
+  storage: Storage,
+  userId: string,
+  task: string,
+): Promise<CapabilityRequestRow> {
+  const priorRequests = await storage.capabilityRequests.listByUser(userId);
+  assertCapabilityCreationQuota(priorRequests);
+  return await storage.capabilityRequests.create(userId, task);
 }
 
 export interface CapabilityBuildResult {
@@ -35,10 +70,10 @@ export async function buildCapability(
   userId: string,
   task: string,
 ): Promise<CapabilityBuildResult> {
-  assertCapabilityAdmin(userId);
+  assertCapabilityEnabled();
   // Fail before model and sandbox work if the least-privilege publisher is absent.
   getCapabilityGitHubConfig();
-  const request = await storage.capabilityRequests.create(userId, task);
+  const request = await createCapabilityRequest(storage, userId, task);
   try {
     await storage.capabilityRequests.update(request.id, { status: 'generating' });
     let draft = await generateCapabilityDraft(task);
@@ -97,11 +132,11 @@ export async function buildCapability(
 }
 
 export async function runMergedCapability(
-  userId: string,
+  _userId: string,
   slug: string,
   input: unknown,
 ): Promise<string> {
-  assertCapabilityAdmin(userId);
+  assertCapabilityEnabled();
   const code = await fetchMergedCapabilityCode(slug);
   assertSafeCapabilityCode(code);
   const result = await executeCapabilityCodeInSandbox(code, input);
@@ -114,9 +149,9 @@ export async function improveSource(
   userId: string,
   task: string,
 ): Promise<SourceImprovementBuildResult> {
-  assertCapabilityAdmin(userId);
+  assertCapabilityEnabled();
   getCapabilityGitHubConfig();
-  const request = await storage.capabilityRequests.create(userId, `[self-improvement] ${task}`);
+  const request = await createCapabilityRequest(storage, userId, `[self-improvement] ${task}`);
   try {
     await storage.capabilityRequests.update(request.id, {
       status: 'generating',
