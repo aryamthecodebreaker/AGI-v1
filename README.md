@@ -22,7 +22,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 The hosted app uses OpenRouter with an ordered list of explicit text-instruction models for chat generation and Neon Postgres for shared storage. Pinning conversational models avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. If the primary free provider is retired, rate-limited, or unavailable before any reply token arrives, the backend tries the next configured conversational model. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
-The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with owner-only, human-reviewed capability and source-improvement workflows.
+The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
 ## Features
 
@@ -33,8 +33,8 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - A small framework-free web UI for conversations, people, and memories.
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
-- Explicit, owner-only `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
-- An owner-only `/improve-self` command that uses FixMap, validates a structured source proposal offline, and opens a draft PR.
+- Explicit, authenticated `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
+- An authenticated `/improve-self` command that uses FixMap, validates a structured source proposal offline, and opens a draft PR.
 
 ## Architecture
 
@@ -58,9 +58,9 @@ Memory ranking uses Reciprocal Rank Fusion to combine keyword and cosine-similar
 
 ## Safe capability building
 
-Capability building is disabled unless an owner explicitly configures it. It does not let the running app rewrite or merge `main`.
+Capability building is disabled unless the deployment explicitly enables and configures it. It does not let the running app rewrite or merge `main`.
 
-1. An allowlisted owner sends `/build-tool <task>`.
+1. A signed-in user sends `/build-tool <task>`.
 2. The LLM proposes one dependency-free Node.js tool, tests, and sample input as strict JSON.
 3. Static validation rejects environment, process, filesystem, network, child-process, worker, dynamic-import, and dynamic-code access.
 4. Vercel Sandbox runs syntax checks, `node:test`, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials.
@@ -70,9 +70,11 @@ Capability building is disabled unless an owner explicitly configures it. It doe
 
 Generated tools intentionally cannot access the network, files, production secrets, or arbitrary subprocesses. That limits what they can do, but keeps unreviewed code away from the application process and credentials.
 
+Each user may have one active capability request at a time and may start at most two capability or source-improvement requests per hour. Merged tools remain available to all signed-in users and still run inside the same isolated sandbox.
+
 ## Safe source improvement
 
-`/improve-self <goal>` lets an allowlisted owner ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README.
+`/improve-self <goal>` lets a signed-in user ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README.
 
 1. A fresh Vercel Sandbox clones the public `main` branch and installs its already-reviewed dependencies without receiving application or GitHub credentials.
 2. Sandbox egress is switched to `deny-all`.
@@ -81,7 +83,7 @@ Generated tools intentionally cannot access the network, files, production secre
 5. Executable proposals must include regression tests. Git validates the generated diff, then the sandbox runs `npm test` and `npm run build` without network access.
 6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.
 
-The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without an explicit owner request and human review.
+The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without an explicit signed-in user request and human review.
 
 ## Tech stack
 
@@ -151,7 +153,6 @@ Keep the feature disabled until all fields are ready:
 
 ```dotenv
 CAPABILITY_BUILDER_ENABLED=false
-CAPABILITY_ADMIN_USER_IDS=u_your_registered_user_id
 GITHUB_APP_ID=
 GITHUB_APP_INSTALLATION_ID=
 GITHUB_APP_PRIVATE_KEY=
@@ -164,7 +165,7 @@ The GitHub App must be installed only on `aryamthecodebreaker/AGI-v1` with:
 - Pull requests: read and write.
 - No administration, secrets, Actions, or workflows permission.
 
-Vercel supplies Sandbox authentication through project OIDC in production. Once the GitHub App values and owner user ID are configured, set `CAPABILITY_BUILDER_ENABLED=true`.
+Vercel supplies Sandbox authentication through project OIDC in production. Once the GitHub App values are configured, set `CAPABILITY_BUILDER_ENABLED=true` to make the commands available to signed-in users.
 
 ## Tests
 

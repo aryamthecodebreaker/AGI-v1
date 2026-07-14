@@ -15,21 +15,9 @@ function enabled(): boolean {
   return process.env.CAPABILITY_BUILDER_ENABLED?.trim().toLowerCase() === 'true';
 }
 
-function adminIds(): Set<string> {
-  return new Set(
-    (process.env.CAPABILITY_ADMIN_USER_IDS ?? '')
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean),
-  );
-}
-
-export function assertCapabilityAdmin(userId: string): void {
+export function assertCapabilityEnabled(): void {
   if (!enabled()) {
     throw Errors.forbidden('Capability builder is disabled');
-  }
-  if (!adminIds().has(userId)) {
-    throw Errors.forbidden('Capability builder is restricted to configured owner accounts');
   }
 }
 

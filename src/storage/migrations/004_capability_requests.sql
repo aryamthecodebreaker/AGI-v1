@@ -1,4 +1,4 @@
--- Audit trail for owner-requested, sandboxed capability builds.
+-- Audit trail for user-requested, sandboxed capability builds.
 CREATE TABLE IF NOT EXISTS capability_requests (
   id              TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

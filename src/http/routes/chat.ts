@@ -10,7 +10,7 @@ import { createOrchestrator } from '../../brain/orchestrator.js';
 import { startSse } from '../sse.js';
 import { logger } from '../../logger.js';
 import { parseCapabilityCommand } from '../../capabilities/commands.js';
-import { assertCapabilityAdmin } from '../../capabilities/config.js';
+import { assertCapabilityEnabled } from '../../capabilities/config.js';
 import { buildCapability, improveSource, runMergedCapability } from '../../capabilities/service.js';
 import { Errors } from '../../util/errors.js';
 
@@ -52,7 +52,7 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     }
 
     if (capabilityCommand) {
-      assertCapabilityAdmin(user.id);
+      assertCapabilityEnabled();
       await storage.messages.insert({
         conversationId: body.conversationId,
         userId: user.id,

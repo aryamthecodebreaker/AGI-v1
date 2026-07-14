@@ -2,9 +2,11 @@ import { generateKeyPairSync } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { describe, expect, it } from 'vitest';
 import { parseCapabilityCommand } from '../src/capabilities/commands.js';
-import { assertCapabilityAdmin } from '../src/capabilities/config.js';
+import { assertCapabilityEnabled } from '../src/capabilities/config.js';
 import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
+import { assertCapabilityCreationQuota } from '../src/capabilities/service.js';
+import type { CapabilityRequestRow } from '../src/storage/repositories/capabilityRequestRepo.js';
 import {
   applyImprovementReplacements,
   extractImprovementPatch,
@@ -38,7 +40,7 @@ describe('capability commands', () => {
     });
   });
 
-  it('parses an explicit owner self-improvement goal', () => {
+  it('parses an explicit self-improvement goal', () => {
     expect(parseCapabilityCommand('/improve-self Make chat errors clear and recoverable')).toEqual({
       type: 'improve',
       task: 'Make chat errors clear and recoverable',
@@ -168,19 +170,71 @@ describe('chat stream disconnect handling', () => {
 });
 
 describe('capability configuration', () => {
-  it('accepts whitespace around deployment-provided flag values', () => {
+  it('allows every authenticated caller when the feature is enabled', () => {
     const previousEnabled = process.env.CAPABILITY_BUILDER_ENABLED;
-    const previousAdmins = process.env.CAPABILITY_ADMIN_USER_IDS;
     try {
       process.env.CAPABILITY_BUILDER_ENABLED = 'true\n';
-      process.env.CAPABILITY_ADMIN_USER_IDS = 'u_owner\n';
-      expect(() => assertCapabilityAdmin('u_owner')).not.toThrow();
+      expect(() => assertCapabilityEnabled()).not.toThrow();
     } finally {
       if (previousEnabled === undefined) delete process.env.CAPABILITY_BUILDER_ENABLED;
       else process.env.CAPABILITY_BUILDER_ENABLED = previousEnabled;
-      if (previousAdmins === undefined) delete process.env.CAPABILITY_ADMIN_USER_IDS;
-      else process.env.CAPABILITY_ADMIN_USER_IDS = previousAdmins;
     }
+  });
+
+  it('keeps the global capability feature flag as a kill switch', () => {
+    const previousEnabled = process.env.CAPABILITY_BUILDER_ENABLED;
+    try {
+      process.env.CAPABILITY_BUILDER_ENABLED = 'false';
+      expect(() => assertCapabilityEnabled()).toThrow(/disabled/);
+    } finally {
+      if (previousEnabled === undefined) delete process.env.CAPABILITY_BUILDER_ENABLED;
+      else process.env.CAPABILITY_BUILDER_ENABLED = previousEnabled;
+    }
+  });
+});
+
+describe('capability creation quota', () => {
+  const now = 2_000_000_000_000;
+  const request = (overrides: Partial<CapabilityRequestRow> = {}): CapabilityRequestRow => ({
+    id: 'r_test',
+    user_id: 'u_test',
+    task: 'Build a safe test capability',
+    slug: null,
+    status: 'pr_opened',
+    branch_name: null,
+    pr_url: null,
+    sandbox_summary: null,
+    error: null,
+    created_at: now - 1_000,
+    updated_at: now - 1_000,
+    ...overrides,
+  });
+
+  it('allows up to two completed creation requests per user per hour', () => {
+    expect(() => assertCapabilityCreationQuota([request()], now)).not.toThrow();
+  });
+
+  it('blocks a second active creation request', () => {
+    expect(() => assertCapabilityCreationQuota([
+      request({ status: 'generating' }),
+    ], now)).toThrow(/active capability request/);
+  });
+
+  it('limits creation and self-improvement requests to two per hour', () => {
+    expect(() => assertCapabilityCreationQuota([
+      request({ id: 'r_one' }),
+      request({ id: 'r_two', status: 'failed', created_at: now - 2_000 }),
+    ], now)).toThrow(/2 requests per user per hour/);
+  });
+
+  it('does not permanently lock a user behind stale requests', () => {
+    expect(() => assertCapabilityCreationQuota([
+      request({
+        status: 'validating',
+        created_at: now - 3_700_000,
+        updated_at: now - 16 * 60 * 1_000,
+      }),
+    ], now)).not.toThrow();
   });
 });
 
