@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses OpenRouter for chat generation and Neon Postgres for shared storage. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses OpenRouter with the explicit `qwen/qwen3-next-80b-a3b-instruct:free` text-instruction model for chat generation and Neon Postgres for shared storage. Pinning a conversational model avoids `openrouter/free` randomly selecting a specialist model, such as a content-safety classifier. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with owner-only, human-reviewed capability and source-improvement workflows.
 
@@ -92,7 +92,7 @@ The running app cannot push to `main`, merge a PR, edit its safeguards, access p
 | Hosted storage | Neon Postgres through `@neondatabase/serverless` |
 | Local/test storage | `better-sqlite3` with FTS5 |
 | Embeddings | `Xenova/all-MiniLM-L6-v2` through `@huggingface/transformers` |
-| Hosted LLM | OpenRouter OpenAI-compatible API |
+| Hosted LLM | OpenRouter API with Qwen3 Next 80B A3B Instruct (free variant) |
 | Other LLM option | Google Gemini REST API |
 | Generated-code isolation | Vercel Sandbox |
 | Repository context map | FixMap 0.3.1 |
@@ -118,7 +118,7 @@ Set one of these combinations in `.env`:
 
 ```dotenv
 LLM_BACKEND=openrouter
-LLM_MODEL_ID=openrouter/free
+LLM_MODEL_ID=qwen/qwen3-next-80b-a3b-instruct:free
 OPENROUTER_API_KEY=your_server_side_key
 ```
 
@@ -183,7 +183,7 @@ The integration tests create temporary data and remove it after the run. `.env.l
 
 ## Known limitations
 
-- OpenRouter free-model routing and availability can change independently of this repository.
+- The pinned OpenRouter free-model variant can be rate-limited, become unavailable, or be retired independently of this repository; choose another current text-instruction model if that happens.
 - The local embedding model can add cold-start time and memory usage.
 - Postgres vector search currently performs a bounded application-side scan instead of using `pgvector`.
 - Generated capabilities are deliberately limited to dependency-free, offline computation.
