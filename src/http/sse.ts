@@ -31,6 +31,7 @@ export function startSse(reply: FastifyReply): {
       reply.raw.write(`: ${text}\n\n`);
     },
     done() {
+      if (reply.raw.writableEnded || reply.raw.destroyed) return;
       reply.raw.write('data: [DONE]\n\n');
       reply.raw.end();
     },

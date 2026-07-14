@@ -22,7 +22,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 The hosted app uses OpenRouter for chat generation and Neon Postgres for shared storage. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
 
-The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with an owner-only capability-builder workflow.
+The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with owner-only, human-reviewed capability and source-improvement workflows.
 
 ## Features
 
@@ -34,6 +34,7 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
 - Explicit, owner-only `/build-tool` and `/run-tool` commands for sandboxed capability development.
+- An owner-only `/improve-self` command that uses FixMap, validates a proposed source patch offline, and opens a draft PR.
 
 ## Architecture
 
@@ -69,6 +70,19 @@ Capability building is disabled unless an owner explicitly configures it. It doe
 
 Generated tools intentionally cannot access the network, files, production secrets, or arbitrary subprocesses. That limits what they can do, but keeps unreviewed code away from the application process and credentials.
 
+## Safe source improvement
+
+`/improve-self <goal>` lets an allowlisted owner ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README.
+
+1. A fresh Vercel Sandbox clones the public `main` branch and installs its already-reviewed dependencies without receiving application or GitHub credentials.
+2. Sandbox egress is switched to `deny-all`.
+3. FixMap 0.3.1 ranks the repository files and test route relevant to the goal.
+4. The LLM receives that bounded context and returns a unified patch. Static rules block dependency, auth, storage-migration, command-router/server, publishing, sandbox, and self-improvement-guardrail changes.
+5. Executable patches must include regression tests. Git validates the patch, then the sandbox runs `npm test` and `npm run build` without network access.
+6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.
+
+The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without an explicit owner request and human review.
+
 ## Tech stack
 
 | Layer | Current choice |
@@ -81,6 +95,7 @@ Generated tools intentionally cannot access the network, files, production secre
 | Hosted LLM | OpenRouter OpenAI-compatible API |
 | Other LLM option | Google Gemini REST API |
 | Generated-code isolation | Vercel Sandbox |
+| Repository context map | FixMap 0.3.1 |
 | Frontend | Vanilla HTML, CSS, and JavaScript |
 | Tests | Vitest plus gated Neon and Sandbox integration tests |
 
@@ -173,6 +188,7 @@ The integration tests create temporary data and remove it after the run. `.env.l
 - Postgres vector search currently performs a bounded application-side scan instead of using `pgvector`.
 - Generated capabilities are deliberately limited to dependency-free, offline computation.
 - Capability PRs still require human review and protected-branch checks.
+- Source self-improvements are bounded patch proposals, not an autonomous merge or deployment loop.
 - `LLM_BACKEND=scratch` is a placeholder; a scratch backend is not implemented.
 
 ## License

@@ -2,6 +2,8 @@ import type { Storage } from '../storage/index.js';
 import { assertCapabilityAdmin, getCapabilityGitHubConfig } from './config.js';
 import { assertSafeCapabilityCode, generateCapabilityDraft } from './draft.js';
 import { fetchMergedCapabilityCode, publishCapabilityDraft } from './github.js';
+import { publishSourceImprovement } from './github.js';
+import { generateAndValidateSourceImprovement } from './improvement.js';
 import {
   executeCapabilityCodeInSandbox,
   validateAndExecuteInSandbox,
@@ -18,6 +20,14 @@ export interface CapabilityBuildResult {
   sampleOutput: string;
   branch: string;
   prUrl: string;
+}
+
+export interface SourceImprovementBuildResult {
+  requestId: string;
+  changedFiles: string[];
+  branch: string;
+  prUrl: string;
+  fixMapSummary: string;
 }
 
 export async function buildCapability(
@@ -97,4 +107,64 @@ export async function runMergedCapability(
   const result = await executeCapabilityCodeInSandbox(code, input);
   if (!result.passed) throw new Error(`Capability execution failed:\n${result.output}`);
   return result.output;
+}
+
+export async function improveSource(
+  storage: Storage,
+  userId: string,
+  task: string,
+): Promise<SourceImprovementBuildResult> {
+  assertCapabilityAdmin(userId);
+  getCapabilityGitHubConfig();
+  const request = await storage.capabilityRequests.create(userId, `[self-improvement] ${task}`);
+  try {
+    await storage.capabilityRequests.update(request.id, {
+      status: 'generating',
+      slug: 'self-improve',
+    });
+    const result = await generateAndValidateSourceImprovement(task);
+    await storage.capabilityRequests.update(request.id, {
+      status: 'validating',
+      slug: 'self-improve',
+    });
+    const sandboxSummary = [
+      result.fixMapSummary,
+      `Context: ${result.contextPaths.join(', ')}`,
+      `Changed: ${result.changes.map((change) => change.path).join(', ')}`,
+      '',
+      result.testOutput,
+      result.buildOutput,
+    ].join('\n').slice(0, 12_000);
+    const published = await publishSourceImprovement(
+      result.changes,
+      task,
+      request.id,
+      result.baseSha,
+      sandboxSummary,
+    );
+    await storage.capabilityRequests.update(request.id, {
+      status: 'pr_opened',
+      slug: 'self-improve',
+      branchName: published.branch,
+      prUrl: published.prUrl,
+      sandboxSummary,
+    });
+    return {
+      requestId: request.id,
+      changedFiles: result.changes.map((change) => change.path),
+      branch: published.branch,
+      prUrl: published.prUrl,
+      fixMapSummary: result.fixMapSummary,
+    };
+  } catch (error) {
+    try {
+      await storage.capabilityRequests.update(request.id, {
+        status: 'failed',
+        error: errorMessage(error),
+      });
+    } catch {
+      // Preserve the original improvement error if audit persistence also fails.
+    }
+    throw error;
+  }
 }
