@@ -5,6 +5,15 @@ import { logger } from '../logger.js';
 import type { ChatMessage, GenOpts, LlmBackend } from './types.js';
 
 const CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const WEB_SEARCH_FALLBACK_NOTE: ChatMessage = {
+  role: 'system',
+  content: [
+    'The web-search provider was temporarily unavailable for this request.',
+    'Answer from existing knowledge when possible.',
+    'If the answer requires current verification, say that clearly.',
+    'Do not claim you searched the web and do not invent sources.',
+  ].join(' '),
+};
 
 interface OpenRouterError {
   code?: number | string;
@@ -243,8 +252,22 @@ export class OpenRouterBackend implements LlmBackend {
     // can be preserved as source links. Ordinary chat remains streamed through
     // the explicitly configured conversational model fallbacks.
     if (opts.webSearch) {
-      yield await this.generateOnce(messages, opts);
-      return;
+      try {
+        yield await this.generateOnce(messages, opts);
+        return;
+      } catch (error) {
+        if (opts.signal?.aborted) throw error;
+        logger.warn(
+          { err: error, webSearchModel: this.webSearchModelId },
+          'openrouter: web search failed; retrying without web search',
+        );
+        const fallbackMessages = [...messages, WEB_SEARCH_FALLBACK_NOTE];
+        const fallbackOpts = { ...opts, webSearch: undefined };
+        for await (const text of this.generate(fallbackMessages, fallbackOpts)) {
+          yield text;
+        }
+        return;
+      }
     }
 
     const models = this.models(opts);
