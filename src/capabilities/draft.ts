@@ -9,7 +9,7 @@ export const capabilityDraftSchema = z.object({
   summary: z.string().min(10).max(500),
   toolCode: z.string().min(40).max(MAX_CODE_CHARS),
   testCode: z.string().min(40).max(MAX_CODE_CHARS),
-  sampleInput: z.unknown(),
+  sampleInput: z.record(z.unknown()),
 }).strict();
 
 export type CapabilityDraft = z.infer<typeof capabilityDraftSchema>;
@@ -20,12 +20,15 @@ Return exactly one JSON object with keys: slug, summary, toolCode, testCode, sam
 Rules:
 - slug is lowercase kebab-case, 3-40 characters.
 - toolCode is dependency-free Node.js 24 ESM and exports: async function run(input).
+- run(input) always receives exactly one JSON object. Never use a top-level string, number, boolean, null, or array as the input contract.
 - The exported function returns JSON-serializable data.
 - testCode uses node:test and node:assert/strict, imports run from ./tool.mjs, and has meaningful passing tests.
+- Every test must call run with an object whose field names and value types match sampleInput, and toolCode must read that same object shape.
 - Do not read environment variables, files, credentials, or process state.
 - Do not use the network, child processes, workers, dynamic import, eval, or Function.
 - Do not include a CLI wrapper; the host supplies a trusted runner.
-- sampleInput is a small realistic JSON value that demonstrates the requested capability.
+- sampleInput is a small realistic JSON object that demonstrates the requested capability.
+- Example contract: sampleInput {"text":"one two"}, toolCode reads input.text, and tests call run({ text: "one two" }).
 - No markdown fences and no text outside the JSON object.`;
 
 const forbiddenPatterns: Array<[RegExp, string]> = [
@@ -91,10 +94,14 @@ export function validateCapabilityDraft(value: unknown): CapabilityDraft {
 export async function generateCapabilityDraft(
   task: string,
   llm: LlmBackend = getLlmBackend(),
+  repairFeedback?: string,
 ): Promise<CapabilityDraft> {
+  const repairInstruction = repairFeedback
+    ? `\n\nA previous draft failed sandbox validation. Return a corrected, complete draft. Keep toolCode, every run(...) call in testCode, and sampleInput on exactly the same object input contract.\nValidation failure:\n${repairFeedback.slice(0, 4_000)}`
+    : '';
   const messages: ChatMessage[] = [
     { role: 'system', content: generationPrompt },
-    { role: 'user', content: `Requested capability:\n${task}` },
+    { role: 'user', content: `Requested capability:\n${task}${repairInstruction}` },
   ];
   await llm.ready();
   const raw = await llm.generateOnce(messages, { maxNewTokens: 1800, temperature: 0.15 });
