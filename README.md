@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses Google's `gemini-3-flash-preview` model through the Gemini REST API and Neon Postgres for shared storage. AGI-v1 supplies its own server-side public-search and safe direct-URL inspection tool, so web answers do not depend on Gemini grounding or an OpenRouter search quota. Gemini 3 runs with minimal thinking by default so bounded chat and JSON tasks return complete visible output. The Gemini API key stays in Vercel's encrypted server-side environment and is never sent to the browser. OpenRouter remains available as an optional backend. Local development falls back to SQLite when `DATABASE_URL` is absent.
+The hosted app uses Google's `gemini-3-flash-preview` model through the Gemini REST API and Neon Postgres for shared storage, with ordered failover to stable `gemini-3.5-flash` and `gemini-3.1-flash-lite` when a model is unavailable or its model-specific quota is exhausted. AGI-v1 supplies its own server-side public-search and safe direct-URL inspection tool, so web answers do not depend on Gemini grounding or an OpenRouter search quota. Gemini 3 runs with minimal thinking by default so bounded chat and JSON tasks return complete visible output. The Gemini API key stays in Vercel's encrypted server-side environment and is never sent to the browser. OpenRouter remains available as an optional backend. Local development falls back to SQLite when `DATABASE_URL` is absent.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -142,6 +142,7 @@ LLM_MODEL_ID=gemini-3-flash-preview
 GEMINI_API_KEY=your_server_side_key
 GEMINI_WEB_SEARCH_ENABLED=true
 GEMINI_THINKING_LEVEL=minimal
+GEMINI_FALLBACK_MODEL_IDS=gemini-3.5-flash,gemini-3.1-flash-lite
 ```
 
 If `DATABASE_URL` is empty, the app creates a local SQLite database under `DATA_DIR`. Never expose either LLM key to browser code.
@@ -157,6 +158,7 @@ The repository includes `vercel.json`. The deployed project needs:
 - The checked-in model is `gemini-3-flash-preview`; preview model identifiers and availability can change.
 - Optional `GEMINI_WEB_SEARCH_ENABLED=false` to disable AGI-v1's server-side search and URL-inspection tool.
 - Optional `GEMINI_THINKING_LEVEL=minimal|low|medium|high`; `minimal` is the production default so small output budgets are not consumed by hidden reasoning.
+- Optional comma-separated `GEMINI_FALLBACK_MODEL_IDS`; the default uses stable `gemini-3.5-flash` then `gemini-3.1-flash-lite`. AGI moves on immediately for a model-specific daily quota and otherwise retries transient failures before failover.
 - If switching back to OpenRouter, set `OPENROUTER_API_KEY`. Optional `OPENROUTER_WEB_SEARCH_ENABLED`, `OPENROUTER_WEB_SEARCH_MODEL_ID`, and `OPENROUTER_TASK_FALLBACK_MODEL_ID` settings apply only to that backend.
 - A Neon integration that provides `DATABASE_URL`.
 

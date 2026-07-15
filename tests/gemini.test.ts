@@ -141,4 +141,100 @@ describe('Gemini backend', () => {
       .rejects.toThrow('Gemini generate failed: 503');
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it('moves immediately to the next model when a per-model daily quota is exhausted', async () => {
+    const retryWait = vi.fn(async () => {});
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          code: 429,
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{
+            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+            violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+          }],
+        },
+      }), { status: 429 }))
+      .mockResolvedValueOnce(geminiJson('FALLBACK_OK'));
+    vi.stubGlobal('fetch', fetchMock);
+    const backend = new GeminiBackend(
+      'test-key',
+      'gemini-3-flash-preview',
+      true,
+      'minimal',
+      retryWait,
+      ['gemini-3.5-flash', 'gemini-3.1-flash-lite'],
+    );
+
+    await expect(backend.generateOnce([{ role: 'user', content: 'hello' }]))
+      .resolves.toBe('FALLBACK_OK');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/gemini-3-flash-preview:generateContent');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/gemini-3.5-flash:generateContent');
+    expect(retryWait).not.toHaveBeenCalled();
+  });
+
+  it('falls back after bounded retries for a persistently unavailable model', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('high demand', { status: 503 }))
+      .mockResolvedValueOnce(new Response('high demand', { status: 503 }))
+      .mockResolvedValueOnce(new Response('high demand', { status: 503 }))
+      .mockResolvedValueOnce(geminiJson('SECOND_MODEL_OK'));
+    vi.stubGlobal('fetch', fetchMock);
+    const backend = new GeminiBackend(
+      'test-key',
+      'gemini-3-flash-preview',
+      true,
+      'minimal',
+      async () => {},
+      ['gemini-3.5-flash'],
+    );
+
+    await expect(backend.generateOnce([{ role: 'user', content: 'hello' }]))
+      .resolves.toBe('SECOND_MODEL_OK');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain('/gemini-3.5-flash:generateContent');
+  });
+
+  it('falls back when a successful non-streaming response contains no text', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(geminiJson(''))
+      .mockResolvedValueOnce(geminiJson('VISIBLE_FALLBACK'));
+    vi.stubGlobal('fetch', fetchMock);
+    const backend = new GeminiBackend(
+      'test-key',
+      'gemini-3-flash-preview',
+      true,
+      'minimal',
+      async () => {},
+      ['gemini-3.5-flash'],
+    );
+
+    await expect(backend.generateOnce([{ role: 'user', content: 'hello' }]))
+      .resolves.toBe('VISIBLE_FALLBACK');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back when a successful stream completes before emitting text', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(geminiStream(''))
+      .mockResolvedValueOnce(geminiStream('STREAM_FALLBACK'));
+    vi.stubGlobal('fetch', fetchMock);
+    const backend = new GeminiBackend(
+      'test-key',
+      'gemini-3-flash-preview',
+      true,
+      'minimal',
+      async () => {},
+      ['gemini-3.5-flash'],
+    );
+    let response = '';
+
+    for await (const chunk of backend.generate([{ role: 'user', content: 'hello' }])) {
+      response += chunk;
+    }
+
+    expect(response).toBe('STREAM_FALLBACK');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

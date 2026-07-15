@@ -16,6 +16,7 @@ const envSchema = z.object({
   GEMINI_WEB_SEARCH_ENABLED: z.string().default('true')
     .transform((value) => value.trim().toLowerCase() === 'true'),
   GEMINI_THINKING_LEVEL: z.enum(['minimal', 'low', 'medium', 'high']).default('minimal'),
+  GEMINI_FALLBACK_MODEL_IDS: z.string().default('gemini-3.5-flash,gemini-3.1-flash-lite'),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_FALLBACK_MODEL_IDS: z.string().default(''),
   OPENROUTER_TASK_FALLBACK_MODEL_ID: z.string().trim().min(1).default('openrouter/free'),
@@ -99,6 +100,10 @@ export const config = {
   geminiApiKey: parsed.GEMINI_API_KEY,
   geminiWebSearchEnabled: parsed.GEMINI_WEB_SEARCH_ENABLED,
   geminiThinkingLevel: parsed.GEMINI_THINKING_LEVEL,
+  geminiFallbackModelIds: parsed.GEMINI_FALLBACK_MODEL_IDS
+    .split(',')
+    .map((model) => model.trim())
+    .filter((model) => model && model !== parsed.LLM_MODEL_ID),
   openRouterApiKey: parsed.OPENROUTER_API_KEY,
   openRouterFallbackModelIds: parsed.OPENROUTER_FALLBACK_MODEL_IDS
     .split(',')
