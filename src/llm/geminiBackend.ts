@@ -20,8 +20,20 @@ import {
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const MODEL_FALLBACK_STATUSES = new Set([404, ...RETRYABLE_STATUSES]);
 type GeminiThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 type RetryWait = (attempt: number, response: Response | undefined, signal: AbortSignal | undefined) => Promise<void>;
+
+class GeminiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly responseText: string,
+  ) {
+    super(message);
+    this.name = 'GeminiRequestError';
+  }
+}
 
 interface GeminiPart {
   text: string;
@@ -143,6 +155,10 @@ function retryDelayMs(attempt: number, response?: Response): number {
   return Math.min(500 * (2 ** (attempt - 1)), 4_000);
 }
 
+function isDailyQuotaExhaustion(responseText: string): boolean {
+  return /(?:GenerateRequestsPerDay|requests?\s+per\s+day|\bRPD\b)/i.test(responseText);
+}
+
 const waitBeforeRetry: RetryWait = async (attempt, response, signal) => {
   const delay = retryDelayMs(attempt, response);
   await new Promise<void>((resolve, reject) => {
@@ -164,6 +180,7 @@ export class GeminiBackend implements LlmBackend {
   readonly supportsWebSearch: boolean;
   private readonly apiKey: string;
   private readonly modelId: string;
+  private readonly modelIds: string[];
 
   constructor(
     apiKey: string,
@@ -171,9 +188,11 @@ export class GeminiBackend implements LlmBackend {
     webSearchEnabled = true,
     private readonly thinkingLevel: GeminiThinkingLevel = 'minimal',
     private readonly retryWait: RetryWait = waitBeforeRetry,
+    fallbackModelIds: string[] = [],
   ) {
     this.apiKey = apiKey;
     this.modelId = modelId;
+    this.modelIds = [...new Set([modelId, ...fallbackModelIds.map((value) => value.trim()).filter(Boolean)])];
     this.name = `gemini:${modelId}`;
     this.supportsWebSearch = webSearchEnabled;
   }
@@ -192,74 +211,29 @@ export class GeminiBackend implements LlmBackend {
       }
     }
 
-    const url = `${API_BASE}/${this.modelId}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
-    const body = toGeminiRequest(
-      messages,
-      opts,
-      this.modelId.startsWith('gemini-3') ? this.thinkingLevel : undefined,
-    );
-
-    const res = await this.requestWithRetry(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    }, 'stream');
-    if (!res.body) throw new Error('Gemini stream failed: response body was empty');
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = '';
-    let sawText = false;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        pending += decoder.decode(value, { stream: true });
-
-        // Flush every complete SSE frame currently in the buffer.
-        let boundary = pending.indexOf('\n\n');
-        while (boundary !== -1) {
-          const frame = pending.slice(0, boundary);
-          pending = pending.slice(boundary + 2);
-          for (const payload of parseStreamBuffer(frame)) {
-            try {
-              const parsed = JSON.parse(payload) as GeminiStreamChunk;
-              const text = extractTextFromChunk(parsed);
-              if (text) {
-                sawText = true;
-                yield text;
-              }
-            } catch (err) {
-              logger.warn({ err, payload }, 'gemini: could not parse stream chunk');
-            }
-          }
-          boundary = pending.indexOf('\n\n');
-        }
+    let remainingModels = this.modelIds;
+    while (remainingModels.length > 0) {
+      const { response, modelId } = await this.requestWithModelFallback(
+        messages,
+        opts,
+        'stream',
+        remainingModels,
+      );
+      let sawText = false;
+      for await (const text of this.readStreamText(response)) {
+        sawText = true;
+        yield text;
       }
-      // Drain anything left.
-      if (pending.trim()) {
-        for (const payload of parseStreamBuffer(pending)) {
-          try {
-            const parsed = JSON.parse(payload) as GeminiStreamChunk;
-            const text = extractTextFromChunk(parsed);
-            if (text) {
-              sawText = true;
-              yield text;
-            }
-          } catch {
-            /* ignore */
-          }
-        }
+      if (sawText) return;
+
+      const nextIndex = remainingModels.indexOf(modelId) + 1;
+      const nextModels = remainingModels.slice(nextIndex);
+      if (nextModels.length === 0) {
+        throw new Error(`Gemini stream failed 502: ${modelId} returned no text`);
       }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
+      logger.warn({ modelId, nextModel: nextModels[0] }, 'gemini: empty stream; trying fallback model');
+      remainingModels = nextModels;
     }
-    if (!sawText) throw new Error(`Gemini stream failed 502: ${this.modelId} returned no text`);
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenOpts = {}): Promise<string> {
@@ -271,22 +245,27 @@ export class GeminiBackend implements LlmBackend {
       }
     }
 
-    const url = `${API_BASE}/${this.modelId}:generateContent?key=${this.apiKey}`;
-    const body = toGeminiRequest(
-      messages,
-      opts,
-      this.modelId.startsWith('gemini-3') ? this.thinkingLevel : undefined,
-    );
-    const res = await this.requestWithRetry(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    }, 'generate');
-    const json = (await res.json()) as GeminiStreamChunk;
-    const text = extractTextFromChunk(json).trim();
-    if (!text) throw new Error(`Gemini generate failed 502: ${this.modelId} returned no text`);
-    return text;
+    let remainingModels = this.modelIds;
+    while (remainingModels.length > 0) {
+      const { response, modelId } = await this.requestWithModelFallback(
+        messages,
+        opts,
+        'generate',
+        remainingModels,
+      );
+      const json = (await response.json()) as GeminiStreamChunk;
+      const text = extractTextFromChunk(json).trim();
+      if (text) return text;
+
+      const nextIndex = remainingModels.indexOf(modelId) + 1;
+      const nextModels = remainingModels.slice(nextIndex);
+      if (nextModels.length === 0) {
+        throw new Error(`Gemini generate failed 502: ${modelId} returned no text`);
+      }
+      logger.warn({ modelId, nextModel: nextModels[0] }, 'gemini: empty response; trying fallback model');
+      remainingModels = nextModels;
+    }
+    throw new Error('Gemini generate failed 502: every configured model returned no text');
   }
 
   private async groundWebRequest(
@@ -311,7 +290,92 @@ export class GeminiBackend implements LlmBackend {
     };
   }
 
+  private async *readStreamText(response: Response): AsyncIterable<string> {
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        pending += decoder.decode(value, { stream: true });
+
+        let boundary = pending.indexOf('\n\n');
+        while (boundary !== -1) {
+          const frame = pending.slice(0, boundary);
+          pending = pending.slice(boundary + 2);
+          for (const payload of parseStreamBuffer(frame)) {
+            try {
+              const parsed = JSON.parse(payload) as GeminiStreamChunk;
+              const text = extractTextFromChunk(parsed);
+              if (text) yield text;
+            } catch (error) {
+              logger.warn({ err: error, payload }, 'gemini: could not parse stream chunk');
+            }
+          }
+          boundary = pending.indexOf('\n\n');
+        }
+      }
+      if (pending.trim()) {
+        for (const payload of parseStreamBuffer(pending)) {
+          try {
+            const parsed = JSON.parse(payload) as GeminiStreamChunk;
+            const text = extractTextFromChunk(parsed);
+            if (text) yield text;
+          } catch {
+            /* ignore incomplete final frames */
+          }
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* ignore */ }
+    }
+  }
+
+  private async requestWithModelFallback(
+    messages: ChatMessage[],
+    opts: GenOpts,
+    operation: 'stream' | 'generate',
+    modelIds = this.modelIds,
+  ): Promise<{ response: Response; modelId: string }> {
+    let lastError: Error | undefined;
+    for (let index = 0; index < modelIds.length; index++) {
+      const modelId = modelIds[index]!;
+      const nextModel = modelIds[index + 1];
+      const params = new URLSearchParams({ key: this.apiKey });
+      if (operation === 'stream') params.set('alt', 'sse');
+      const url = `${API_BASE}/${modelId}:${operation === 'stream' ? 'streamGenerateContent' : 'generateContent'}?${params}`;
+      const body = toGeminiRequest(
+        messages,
+        opts,
+        modelId.startsWith('gemini-3') ? this.thinkingLevel : undefined,
+      );
+      try {
+        const response = await this.requestWithRetry(modelId, url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: opts.signal,
+        }, operation);
+        if (index > 0) logger.info({ modelId, operation }, 'gemini: fallback model succeeded');
+        return { response, modelId };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (opts.signal?.aborted || !nextModel) throw lastError;
+        const status = lastError instanceof GeminiRequestError ? lastError.status : undefined;
+        if (status !== undefined && !MODEL_FALLBACK_STATUSES.has(status)) throw lastError;
+        logger.warn(
+          { err: lastError, modelId, nextModel, operation },
+          'gemini: trying fallback model',
+        );
+      }
+    }
+    throw lastError ?? new Error(`Gemini ${operation} failed`);
+  }
+
   private async requestWithRetry(
+    modelId: string,
     url: string,
     init: RequestInit,
     operation: 'stream' | 'generate',
@@ -324,19 +388,24 @@ export class GeminiBackend implements LlmBackend {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (init.signal?.aborted || attempt === MAX_REQUEST_ATTEMPTS) throw lastError;
-        logger.warn({ err: lastError, attempt, operation }, 'gemini: retrying transient network failure');
+        logger.warn({ err: lastError, attempt, modelId, operation }, 'gemini: retrying transient network failure');
         await this.retryWait(attempt, undefined, init.signal ?? undefined);
         continue;
       }
 
       if (response.ok) return response;
       const text = await response.text().catch(() => '');
-      lastError = new Error(`Gemini ${operation} failed: ${response.status} ${text}`);
-      if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_REQUEST_ATTEMPTS) {
+      lastError = new GeminiRequestError(
+        `Gemini ${operation} failed: ${response.status} ${text}`,
+        response.status,
+        text,
+      );
+      const dailyQuotaExhausted = response.status === 429 && isDailyQuotaExhaustion(text);
+      if (dailyQuotaExhausted || !RETRYABLE_STATUSES.has(response.status) || attempt === MAX_REQUEST_ATTEMPTS) {
         throw lastError;
       }
       logger.warn(
-        { status: response.status, attempt, operation },
+        { status: response.status, attempt, modelId, operation },
         'gemini: retrying transient provider response',
       );
       await this.retryWait(attempt, response, init.signal ?? undefined);
@@ -359,6 +428,8 @@ export function getGeminiBackend(): GeminiBackend {
     config.llmModelId,
     config.geminiWebSearchEnabled,
     config.geminiThinkingLevel,
+    undefined,
+    config.geminiFallbackModelIds,
   );
   return cached;
 }
