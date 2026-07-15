@@ -10,8 +10,18 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import type { ChatMessage, GenOpts, LlmBackend } from './types.js';
+import {
+  appendWebSources,
+  collectWebEvidence,
+  evidenceSystemMessage,
+  type WebSource,
+} from './webSearch.js';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const MAX_REQUEST_ATTEMPTS = 3;
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+type GeminiThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
+type RetryWait = (attempt: number, response: Response | undefined, signal: AbortSignal | undefined) => Promise<void>;
 
 interface GeminiPart {
   text: string;
@@ -28,6 +38,8 @@ interface GeminiRequestBody {
     maxOutputTokens?: number;
     topP?: number;
     topK?: number;
+    responseMimeType?: 'application/json';
+    thinkingConfig?: { thinkingLevel: GeminiThinkingLevel };
   };
 }
 interface GeminiStreamChunk {
@@ -40,7 +52,11 @@ interface GeminiStreamChunk {
   }>;
 }
 
-function toGeminiRequest(messages: ChatMessage[], opts: GenOpts): GeminiRequestBody {
+function toGeminiRequest(
+  messages: ChatMessage[],
+  opts: GenOpts,
+  thinkingLevel?: GeminiThinkingLevel,
+): GeminiRequestBody {
   // Split system instructions (Gemini has a dedicated field) from the chat.
   const systemParts: string[] = [];
   const contents: GeminiContent[] = [];
@@ -71,6 +87,8 @@ function toGeminiRequest(messages: ChatMessage[], opts: GenOpts): GeminiRequestB
       maxOutputTokens: opts.maxNewTokens ?? 512,
       topP: opts.topP,
       topK: opts.topK,
+      ...(opts.jsonObject ? { responseMimeType: 'application/json' as const } : {}),
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
     },
   };
   if (systemParts.length > 0) {
@@ -106,15 +124,58 @@ function extractTextFromChunk(chunk: GeminiStreamChunk): string {
   return cand.content.parts.map((p) => p.text ?? '').join('');
 }
 
+function currentUserQuery(messages: ChatMessage[]): string {
+  const content = [...messages].reverse().find((message) => message.role === 'user')?.content.trim() ?? '';
+  if (!content.startsWith('[Context from my long-term memory of you:')) return content;
+  const marker = ']\n\n';
+  const markerIndex = content.lastIndexOf(marker);
+  return markerIndex >= 0 ? content.slice(markerIndex + marker.length).trim() : content;
+}
+
+function retryDelayMs(attempt: number, response?: Response): number {
+  const retryAfter = response?.headers.get('retry-after')?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return Math.min(Math.max(seconds * 1_000, 0), 5_000);
+    const dateDelay = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateDelay)) return Math.min(Math.max(dateDelay, 0), 5_000);
+  }
+  return Math.min(500 * (2 ** (attempt - 1)), 4_000);
+}
+
+const waitBeforeRetry: RetryWait = async (attempt, response, signal) => {
+  const delay = retryDelayMs(attempt, response);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, delay);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('Request aborted'));
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal) {
+      setTimeout(() => signal.removeEventListener('abort', onAbort), delay + 1);
+    }
+  });
+};
+
 export class GeminiBackend implements LlmBackend {
   readonly name: string;
+  readonly supportsWebSearch: boolean;
   private readonly apiKey: string;
   private readonly modelId: string;
 
-  constructor(apiKey: string, modelId: string) {
+  constructor(
+    apiKey: string,
+    modelId: string,
+    webSearchEnabled = true,
+    private readonly thinkingLevel: GeminiThinkingLevel = 'minimal',
+    private readonly retryWait: RetryWait = waitBeforeRetry,
+  ) {
     this.apiKey = apiKey;
     this.modelId = modelId;
     this.name = `gemini:${modelId}`;
+    this.supportsWebSearch = webSearchEnabled;
   }
 
   async ready(): Promise<void> {
@@ -122,23 +183,34 @@ export class GeminiBackend implements LlmBackend {
   }
 
   async *generate(messages: ChatMessage[], opts: GenOpts = {}): AsyncIterable<string> {
-    const url = `${API_BASE}/${this.modelId}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
-    const body = toGeminiRequest(messages, opts);
+    if (opts.webSearch && this.supportsWebSearch) {
+      const { groundedMessages, sources, searched } = await this.groundWebRequest(messages, opts);
+      if (searched) {
+        const response = await this.generateOnce(groundedMessages, { ...opts, webSearch: undefined });
+        yield appendWebSources(response, sources);
+        return;
+      }
+    }
 
-    const res = await fetch(url, {
+    const url = `${API_BASE}/${this.modelId}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
+    const body = toGeminiRequest(
+      messages,
+      opts,
+      this.modelId.startsWith('gemini-3') ? this.thinkingLevel : undefined,
+    );
+
+    const res = await this.requestWithRetry(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: opts.signal,
-    });
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Gemini stream failed: ${res.status} ${text}`);
-    }
+    }, 'stream');
+    if (!res.body) throw new Error('Gemini stream failed: response body was empty');
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let pending = '';
+    let sawText = false;
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -154,7 +226,10 @@ export class GeminiBackend implements LlmBackend {
             try {
               const parsed = JSON.parse(payload) as GeminiStreamChunk;
               const text = extractTextFromChunk(parsed);
-              if (text) yield text;
+              if (text) {
+                sawText = true;
+                yield text;
+              }
             } catch (err) {
               logger.warn({ err, payload }, 'gemini: could not parse stream chunk');
             }
@@ -168,7 +243,10 @@ export class GeminiBackend implements LlmBackend {
           try {
             const parsed = JSON.parse(payload) as GeminiStreamChunk;
             const text = extractTextFromChunk(parsed);
-            if (text) yield text;
+            if (text) {
+              sawText = true;
+              yield text;
+            }
           } catch {
             /* ignore */
           }
@@ -181,23 +259,89 @@ export class GeminiBackend implements LlmBackend {
         /* ignore */
       }
     }
+    if (!sawText) throw new Error(`Gemini stream failed 502: ${this.modelId} returned no text`);
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenOpts = {}): Promise<string> {
+    if (opts.webSearch && this.supportsWebSearch) {
+      const { groundedMessages, sources, searched } = await this.groundWebRequest(messages, opts);
+      if (searched) {
+        const response = await this.generateOnce(groundedMessages, { ...opts, webSearch: undefined });
+        return appendWebSources(response, sources);
+      }
+    }
+
     const url = `${API_BASE}/${this.modelId}:generateContent?key=${this.apiKey}`;
-    const body = toGeminiRequest(messages, opts);
-    const res = await fetch(url, {
+    const body = toGeminiRequest(
+      messages,
+      opts,
+      this.modelId.startsWith('gemini-3') ? this.thinkingLevel : undefined,
+    );
+    const res = await this.requestWithRetry(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: opts.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Gemini generate failed: ${res.status} ${text}`);
-    }
+    }, 'generate');
     const json = (await res.json()) as GeminiStreamChunk;
-    return extractTextFromChunk(json);
+    const text = extractTextFromChunk(json).trim();
+    if (!text) throw new Error(`Gemini generate failed 502: ${this.modelId} returned no text`);
+    return text;
+  }
+
+  private async groundWebRequest(
+    messages: ChatMessage[],
+    opts: GenOpts,
+  ): Promise<{ groundedMessages: ChatMessage[]; sources: WebSource[]; searched: boolean }> {
+    const query = currentUserQuery(messages);
+    const evidence = await collectWebEvidence(
+      query,
+      opts.webSearch?.maxTotalResults ?? opts.webSearch?.maxResults ?? 3,
+      opts.signal,
+    );
+    if (!evidence.searched) return { groundedMessages: messages, sources: [], searched: false };
+    const evidenceMessage = evidenceSystemMessage(
+      evidence,
+      opts.webSearch?.maxCharactersPerResult ?? 2_500,
+    );
+    return {
+      groundedMessages: [...messages, { role: 'system', content: evidenceMessage }],
+      sources: evidence.sources,
+      searched: true,
+    };
+  }
+
+  private async requestWithRetry(
+    url: string,
+    init: RequestInit,
+    operation: 'stream' | 'generate',
+  ): Promise<Response> {
+    let lastError: Error | undefined;
+    for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, init);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (init.signal?.aborted || attempt === MAX_REQUEST_ATTEMPTS) throw lastError;
+        logger.warn({ err: lastError, attempt, operation }, 'gemini: retrying transient network failure');
+        await this.retryWait(attempt, undefined, init.signal ?? undefined);
+        continue;
+      }
+
+      if (response.ok) return response;
+      const text = await response.text().catch(() => '');
+      lastError = new Error(`Gemini ${operation} failed: ${response.status} ${text}`);
+      if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_REQUEST_ATTEMPTS) {
+        throw lastError;
+      }
+      logger.warn(
+        { status: response.status, attempt, operation },
+        'gemini: retrying transient provider response',
+      );
+      await this.retryWait(attempt, response, init.signal ?? undefined);
+    }
+    throw lastError ?? new Error(`Gemini ${operation} failed`);
   }
 }
 
@@ -210,6 +354,11 @@ export function getGeminiBackend(): GeminiBackend {
       'LLM_BACKEND=gemini but GEMINI_API_KEY is not set. Add it to .env (local) or the platform env vars.',
     );
   }
-  cached = new GeminiBackend(config.geminiApiKey, config.llmModelId);
+  cached = new GeminiBackend(
+    config.geminiApiKey,
+    config.llmModelId,
+    config.geminiWebSearchEnabled,
+    config.geminiThinkingLevel,
+  );
   return cached;
 }

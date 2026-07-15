@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { AppError, toHttpError } from '../src/util/errors.js';
 
 describe('toHttpError', () => {
@@ -17,6 +18,20 @@ describe('toHttpError', () => {
     })).toEqual({
       status: 429,
       body: { error: 'RATE_LIMITED', message: 'Too many requests' },
+    });
+  });
+
+  it('maps request-schema validation failures to a safe 400 response', () => {
+    const result = z.object({ task: z.string().min(10) }).safeParse({ task: 'short' });
+    if (result.success) throw new Error('Expected schema validation to fail');
+
+    expect(toHttpError(result.error)).toEqual({
+      status: 400,
+      body: {
+        error: 'BAD_REQUEST',
+        message: 'Invalid request',
+        details: result.error.flatten(),
+      },
     });
   });
 

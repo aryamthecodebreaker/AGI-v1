@@ -20,7 +20,7 @@ AGI-v1 is a multi-user chatbot that stores messages, extracts grounded facts and
 
 ## Current status
 
-The hosted app uses Google's `gemini-3-flash-preview` model through the Gemini REST API and Neon Postgres for shared storage. The Gemini API key stays in Vercel's encrypted server-side environment and is never sent to the browser. OpenRouter remains available as an optional backend, including its ordered conversational fallbacks and model-controlled web-search route. Local development falls back to SQLite when `DATABASE_URL` is absent. This split matters: SQLite is suitable for one local process, while Postgres keeps auth and chat state consistent across separate Vercel function instances.
+The hosted app uses Google's `gemini-3-flash-preview` model through the Gemini REST API and Neon Postgres for shared storage. AGI-v1 supplies its own server-side public-search and safe direct-URL inspection tool, so web answers do not depend on Gemini grounding or an OpenRouter search quota. Gemini 3 runs with minimal thinking by default so bounded chat and JSON tasks return complete visible output. The Gemini API key stays in Vercel's encrypted server-side environment and is never sent to the browser. OpenRouter remains available as an optional backend. Local development falls back to SQLite when `DATABASE_URL` is absent.
 
 The project is not general-purpose AGI. It is an experimental persistent-memory chatbot with authenticated, human-reviewed capability and source-improvement workflows.
 
@@ -33,7 +33,7 @@ The project is not general-purpose AGI. It is an experimental persistent-memory 
 - A small framework-free web UI for conversations, people, and memories.
 - SQLite + FTS5 for local development and tests.
 - Neon Postgres + Postgres full-text search for shared hosted state.
-- Optional OpenRouter web search for chat requests that need current or online information, capped at three results per turn when the OpenRouter backend is active.
+- Automatic provider-independent web search and safe direct-URL inspection for requests that need current or online information, capped at three sources per turn.
 - Automatic capability-gap recovery: a missing safe ability starts a sandboxed tool build or FixMap-guided source-improvement draft without requiring a slash command.
 - Explicit, authenticated `/build-tool` and `/run-tool` commands for sandboxed capability development. Example: `/run-tool word-count {"text":"one two three"}`.
 - An authenticated `/improve-self` command that uses FixMap, validates a structured source proposal offline, and opens a draft PR.
@@ -49,7 +49,7 @@ browser
 Fastify orchestrator
   ├─ persists messages before LLM generation
   ├─ retrieves recent turns + hybrid memory + people
-  ├─ can let OpenRouter decide when a web search is needed
+  ├─ detects web intent and retrieves bounded public evidence or a safe direct URL
   ├─ detects capability gaps and starts safe recovery
   ├─ streams an OpenRouter, Gemini, or local-model response
   └─ extracts grounded facts and people through Vercel-aware background work
@@ -102,6 +102,7 @@ Reply text streams before hosted fact and people extraction runs, but AGI-v1 doe
 | Embeddings | `Xenova/all-MiniLM-L6-v2` through `@huggingface/transformers` |
 | Hosted LLM | Google Gemini REST API with `gemini-3-flash-preview` |
 | Other LLM option | OpenRouter API with ordered conversational fallbacks and the `openrouter:web_search` server tool |
+| Web evidence | AGI-v1 public-search adapters plus DNS-checked direct-URL inspection |
 | Generated-code isolation | Vercel Sandbox |
 | Repository context map | FixMap 0.3.1 |
 | Frontend | Vanilla HTML, CSS, and JavaScript |
@@ -139,6 +140,8 @@ or:
 LLM_BACKEND=gemini
 LLM_MODEL_ID=gemini-3-flash-preview
 GEMINI_API_KEY=your_server_side_key
+GEMINI_WEB_SEARCH_ENABLED=true
+GEMINI_THINKING_LEVEL=minimal
 ```
 
 If `DATABASE_URL` is empty, the app creates a local SQLite database under `DATA_DIR`. Never expose either LLM key to browser code.
@@ -152,6 +155,8 @@ The repository includes `vercel.json`. The deployed project needs:
 - `JWT_SECRET` with at least 32 random characters.
 - `GEMINI_API_KEY` for the checked-in Vercel Gemini configuration.
 - The checked-in model is `gemini-3-flash-preview`; preview model identifiers and availability can change.
+- Optional `GEMINI_WEB_SEARCH_ENABLED=false` to disable AGI-v1's server-side search and URL-inspection tool.
+- Optional `GEMINI_THINKING_LEVEL=minimal|low|medium|high`; `minimal` is the production default so small output budgets are not consumed by hidden reasoning.
 - If switching back to OpenRouter, set `OPENROUTER_API_KEY`. Optional `OPENROUTER_WEB_SEARCH_ENABLED`, `OPENROUTER_WEB_SEARCH_MODEL_ID`, and `OPENROUTER_TASK_FALLBACK_MODEL_ID` settings apply only to that backend.
 - A Neon integration that provides `DATABASE_URL`.
 
@@ -182,6 +187,7 @@ Vercel supplies Sandbox authentication through project OIDC in production. Once 
 ```bash
 npm test
 npm run build
+npm run smoke:web-search -- "search for example.com"
 ```
 
 The default suite uses isolated SQLite databases and does not require cloud credentials. Optional live checks are gated:
@@ -196,7 +202,8 @@ The integration tests create temporary data and remove it after the run. `.env.l
 ## Known limitations
 
 - `gemini-3-flash-preview` is a preview model, so its identifier, limits, and behavior can change.
-- The Gemini backend does not currently expose model-controlled web search. The optional OpenRouter backend supports it and caps a turn at three Exa results.
+- The no-key public search adapters are best-effort and can be throttled or change markup. AGI-v1 falls back between providers and never invents a successful search when none returned evidence.
+- Direct-URL inspection accepts only public HTTP(S) hosts on standard ports, checks DNS for private addresses, follows at most three validated redirects, and reads a bounded text response. It does not execute page JavaScript.
 - Every configured OpenRouter fallback can still be rate-limited at the same time when that optional backend is active. Fallback occurs only before any output is emitted, preventing a response from switching models midway through a sentence.
 - Tool-enabled web replies are returned after the bounded search completes instead of token-by-token so URL citation annotations can be retained as clickable source links.
 - The local embedding model can add cold-start time and memory usage.

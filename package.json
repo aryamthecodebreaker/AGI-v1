@@ -11,6 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "warm": "tsx scripts/warm-models.ts",
+    "smoke:gemini": "tsx scripts/smoke-gemini.ts",
+    "smoke:web-search": "tsx scripts/smoke-web-search.ts",
     "check:native": "node -e \"require('better-sqlite3'); console.log('better-sqlite3 OK on Node',process.version)\""
   },
   "engines": {
