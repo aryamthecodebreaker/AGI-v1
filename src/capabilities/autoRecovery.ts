@@ -86,8 +86,11 @@ export function parseCapabilityGapMarker(text: string): CapabilityGap | null {
 }
 
 export function looksLikeCapabilityLimitation(text: string): boolean {
-  const normalized = text.toLowerCase().replace(/[’‘]/g, "'");
-  return /(?:\bi (?:can't|cannot|am unable to|don't have|do not have)|\bunable to).{0,180}(?:browse|search|access|open|visit|run|execute|send|upload|download|create|call|connect|tool|capability|real[- ]time)/s
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019\u201b\u02bc`\u00b4]/g, "'");
+  return /(?:\bi(?:\s+(?:can't|cannot|am unable to|am not able to|don't have|do not have|lack)|'m unable to|'m not able to)|\bunable to).{0,180}(?:browse|search|access|open|visit|run|execute|send|upload|download|create|call|connect|tool|capability|real[- ]time)/s
     .test(normalized);
 }
 
