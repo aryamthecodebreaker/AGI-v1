@@ -1,3 +1,5 @@
+import { ZodError } from 'zod';
+
 export class AppError extends Error {
   readonly status: number;
   readonly code: string;
@@ -27,6 +29,17 @@ export function toHttpError(err: unknown): { status: number; body: Record<string
     return {
       status: err.status,
       body: { error: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) },
+    };
+  }
+
+  if (err instanceof ZodError) {
+    return {
+      status: 400,
+      body: {
+        error: 'BAD_REQUEST',
+        message: 'Invalid request',
+        details: err.flatten(),
+      },
     };
   }
 

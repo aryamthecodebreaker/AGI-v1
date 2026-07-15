@@ -13,6 +13,9 @@ const envSchema = z.object({
   LLM_MODEL_ID: z.string().default('gemini-3-flash-preview'),
   EMBED_MODEL_ID: z.string().default('Xenova/all-MiniLM-L6-v2'),
   GEMINI_API_KEY: z.string().optional(),
+  GEMINI_WEB_SEARCH_ENABLED: z.string().default('true')
+    .transform((value) => value.trim().toLowerCase() === 'true'),
+  GEMINI_THINKING_LEVEL: z.enum(['minimal', 'low', 'medium', 'high']).default('minimal'),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_FALLBACK_MODEL_IDS: z.string().default(''),
   OPENROUTER_TASK_FALLBACK_MODEL_ID: z.string().trim().min(1).default('openrouter/free'),
@@ -94,6 +97,8 @@ export const config = {
   llmModelId: parsed.LLM_MODEL_ID,
   embedModelId: parsed.EMBED_MODEL_ID,
   geminiApiKey: parsed.GEMINI_API_KEY,
+  geminiWebSearchEnabled: parsed.GEMINI_WEB_SEARCH_ENABLED,
+  geminiThinkingLevel: parsed.GEMINI_THINKING_LEVEL,
   openRouterApiKey: parsed.OPENROUTER_API_KEY,
   openRouterFallbackModelIds: parsed.OPENROUTER_FALLBACK_MODEL_IDS
     .split(',')
