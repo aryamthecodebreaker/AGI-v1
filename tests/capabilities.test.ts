@@ -75,6 +75,10 @@ describe('automatic capability-gap detection', () => {
 
   it('recognizes missing executable abilities without treating ordinary uncertainty as a gap', () => {
     expect(looksLikeCapabilityLimitation("I can't browse the web right now.")).toBe(true);
+    expect(looksLikeCapabilityLimitation('I can’t browse the web right now.')).toBe(true);
+    expect(looksLikeCapabilityLimitation('I’m unable to run that conversion.')).toBe(true);
+    expect(looksLikeCapabilityLimitation('I’m not able to access GitHub.')).toBe(true);
+    expect(looksLikeCapabilityLimitation('I don’t have a tool that can search the web.')).toBe(true);
     expect(looksLikeCapabilityLimitation("I don't know the answer from the context provided.")).toBe(false);
   });
 
