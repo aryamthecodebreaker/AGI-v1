@@ -76,6 +76,15 @@ Generated tools intentionally cannot access the network, files, production secre
 
 Each user may have one active capability request at a time and may start at most two capability or source-improvement requests per hour. Merged tools remain available to all signed-in users and still run inside the same isolated sandbox.
 
+## RSI safety invariant
+
+AGI-v1 implements a Recursive Self-Improvement (RSI) safety invariant to ensure that generated code cannot autonomously compromise the system or its credentials:
+
+1.  **Isolation**: All generated tools and source patches are created and validated in a network-denied, non-persistent Vercel Sandbox.
+2.  **Verification**: Executable changes must include regression tests and pass both `npm test` and `npm run build` within the sandbox before being published.
+3.  **Human-in-the-loop**: The application can only open a **draft pull request**. It has no permission to merge code, push to the `main` branch, or trigger deployments.
+4.  **Protected checks**: Merging requires a human reviewer to approve the PR and all GitHub protected-branch status checks to pass.
+
 ## Safe source improvement
 
 `/improve-self <goal>` lets a signed-in user ask AGI-v1 to propose a focused change to its own brain, chat routes, LLM adapters, utilities, browser UI, scripts, tests, or README. Normal chat can start the same workflow automatically when the model emits a source-level capability-gap signal.
