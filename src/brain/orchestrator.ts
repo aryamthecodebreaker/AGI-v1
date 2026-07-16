@@ -26,6 +26,7 @@ import {
 } from '../capabilities/autoRecovery.js';
 import { assembleContext } from './retrieval.js';
 import { buildPrompt } from './contextBuilder.js';
+import { resolveDirectMemoryRecall } from './directRecall.js';
 
 export interface HandleUserMessageInput {
   userId: string;
@@ -158,7 +159,9 @@ export function createOrchestrator(
         },
       };
 
-      // 4. Build prompt and stream tokens.
+      // 4. Build prompt and stream tokens. Direct self-fact recall is resolved
+      //    deterministically so a people-card name cannot override a grounded
+      //    value already present in long-term memory.
       const prompt: ChatMessage[] = buildPrompt({
         context: ctx,
         userMessage: content,
@@ -169,42 +172,49 @@ export function createOrchestrator(
       let held = '';
       let streamMode: 'pending' | 'normal' | 'marker' = 'pending';
       try {
-        await llm.ready();
-        for await (const chunk of llm.generate(prompt, {
-          maxNewTokens: 384,
-          temperature: 0.7,
-          signal,
-          ...(webSearchAvailable
-            ? {
-                webSearch: {
-                  maxResults: 3,
-                  maxTotalResults: 3,
-                  maxCharactersPerResult: 2_500,
-                },
-              }
-            : {}),
-        })) {
-          assembled += chunk;
-          if (streamMode === 'normal') {
-            yield { type: 'token', data: chunk };
-            continue;
-          }
-
-          held += chunk;
-          const candidate = held.trimStart().toLowerCase();
-          if (
-            candidate.length < CAPABILITY_MARKER_PREFIX.length
-            && CAPABILITY_MARKER_PREFIX.startsWith(candidate)
-          ) {
-            continue;
-          }
-          if (candidate.startsWith(CAPABILITY_MARKER_PREFIX)) {
-            streamMode = 'marker';
-            continue;
-          }
+        const directRecall = resolveDirectMemoryRecall(content, ctx.relevantMemories);
+        if (directRecall) {
+          assembled = directRecall;
           streamMode = 'normal';
-          yield { type: 'token', data: held };
-          held = '';
+          yield { type: 'token', data: directRecall };
+        } else {
+          await llm.ready();
+          for await (const chunk of llm.generate(prompt, {
+            maxNewTokens: 384,
+            temperature: 0.7,
+            signal,
+            ...(webSearchAvailable
+              ? {
+                  webSearch: {
+                    maxResults: 3,
+                    maxTotalResults: 3,
+                    maxCharactersPerResult: 2_500,
+                  },
+                }
+              : {}),
+          })) {
+            assembled += chunk;
+            if (streamMode === 'normal') {
+              yield { type: 'token', data: chunk };
+              continue;
+            }
+
+            held += chunk;
+            const candidate = held.trimStart().toLowerCase();
+            if (
+              candidate.length < CAPABILITY_MARKER_PREFIX.length
+              && CAPABILITY_MARKER_PREFIX.startsWith(candidate)
+            ) {
+              continue;
+            }
+            if (candidate.startsWith(CAPABILITY_MARKER_PREFIX)) {
+              streamMode = 'marker';
+              continue;
+            }
+            streamMode = 'normal';
+            yield { type: 'token', data: held };
+            held = '';
+          }
         }
       } catch (err) {
         logger.error({ err }, 'LLM generation failed');

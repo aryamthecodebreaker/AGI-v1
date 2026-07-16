@@ -18,6 +18,7 @@ import { MEMORY_EXTRACTION_SYSTEM } from '../llm/prompts.js';
 import { embed } from '../llm/embeddings.js';
 import { canonicalize } from '../storage/repositories/personRepo.js';
 import { logger } from '../logger.js';
+import { isFactGroundedInUserMessage } from './factGrounding.js';
 
 export interface ExtractMemoryInput {
   userId: string;
@@ -73,16 +74,6 @@ const NAME_STOPWORDS = new Set([
   'you','me','user','i','he','she','they','them','him','her','someone','anyone',
   'nobody','everyone','person','friend','people','mom','dad','mother','father',
 ]);
-// Common words that are NOT distinctive enough to require source-grounding.
-const FACT_STOPWORDS = new Set([
-  'User','The','A','An','I','It','He','She','They','We','You','My','His','Her',
-  'Their','Our','Your','Me','Him','Them','Us','This','That','These','Those',
-  'And','Or','But','So','If','When','Where','Why','How','What','Who','Which',
-  'Yes','No','Not','Nothing','Is','Are','Was','Were','Be','Been','Being','Have',
-  'Has','Had','Do','Does','Did','Will','Would','Can','Could','Should','May',
-  'Might','Must','Today','Yesterday','Tomorrow',
-]);
-
 export async function extractAndStoreMemory(
   storage: Storage,
   llm: LlmBackend,
@@ -147,21 +138,8 @@ export async function extractAndStoreMemory(
   const sourceTokensLower = new Set(
     input.userMessage.split(/[^\p{L}\p{N}]+/u).map((t) => t.toLowerCase()),
   );
-  const groundedFacts = (payload?.facts ?? []).filter((f) => {
-    const tokens = f.fact.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-    const distinctive = tokens.filter(
-      (t) => /^\d+$/.test(t) || (/^[A-Z]/.test(t) && !FACT_STOPWORDS.has(t)),
-    );
-    if (distinctive.length === 0) {
-      return tokens.some(
-        (t) => t.length >= 4 && sourceTokensLower.has(t.toLowerCase()),
-      );
-    }
-    for (const d of distinctive) {
-      if (!sourceTokensLower.has(d.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const groundedFacts = (payload?.facts ?? []).filter((f) =>
+    isFactGroundedInUserMessage(f.fact, input.userMessage));
 
   const factsToStore = groundedFacts.length > 0
     ? groundedFacts
