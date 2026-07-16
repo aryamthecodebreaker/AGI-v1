@@ -1,10 +1,7 @@
-// AGI-v1 frontend — vanilla JS, no build step.
-// Handles auth, conversation list, SSE chat streaming, people/memories tabs.
-
 import { parseMessageSegments } from './messageLinks.js';
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 const state = {
   user: null,
@@ -12,54 +9,95 @@ const state = {
   currentConversationId: null,
   conversationLoadRequest: 0,
   authMode: 'login',
+  memories: [],
+  capabilities: [],
+  latestSources: [],
+  activePanel: 'chats',
+  sending: false,
 };
 
-// ---------- API helpers ----------
 async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
     ...opts,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `HTTP ${res.status}`);
+    throw new Error(body.message || body.error || `Request failed (${res.status})`);
   }
   if (res.status === 204) return null;
   return res.json();
 }
 
-// ---------- Auth ----------
-async function tryAutoLogin() {
-  try {
-    const me = await api('/api/me');
-    state.user = me;
-    showChat();
-  } catch {
-    showAuth();
-  }
+function showToast(message) {
+  const toast = $('#toast');
+  toast.textContent = message;
+  toast.classList.remove('hidden');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.add('hidden'), 3500);
 }
 
-function showAuth() {
+function setActiveNav(panel) {
+  state.activePanel = panel;
+  $$('[data-panel]').forEach((button) => {
+    if (!button.matches('.nav-item, .mobile-nav-item')) return;
+    button.classList.toggle('active', button.dataset.panel === panel);
+  });
+}
+
+function setHomeMode(enabled) {
+  $('#chat-view').classList.toggle('home-mode', enabled);
+  $('#home-screen').classList.toggle('hidden', !enabled);
+  $('#conversation-screen').classList.toggle('hidden', enabled);
+  if (enabled) $('#chat-input').placeholder = 'Ask me anything…';
+  else $('#chat-input').placeholder = 'Message AGI-v1…';
+}
+
+function showAuth(message = '') {
   $('#auth-view').classList.remove('hidden');
   $('#chat-view').classList.add('hidden');
+  if (message) $('#auth-error').textContent = message;
 }
 
 async function showChat() {
   $('#auth-view').classList.add('hidden');
   $('#chat-view').classList.remove('hidden');
-  $('#who').textContent = `@${state.user.username}`;
+  $('#profile-name').textContent = state.user.displayName || `@${state.user.username}`;
+  $('#profile-avatar').textContent = (state.user.displayName || state.user.username || 'A')
+    .slice(0, 1)
+    .toUpperCase();
   state.currentConversationId = null;
   state.conversationLoadRequest += 1;
   $('#messages').innerHTML = '';
-  await refreshConversations({ openDefault: true });
-  await refreshMemories();
+  setHomeMode(true);
+  setActiveNav('chats');
+  await Promise.all([
+    refreshConversations(),
+    refreshMemories(),
+    refreshCapabilities(),
+  ]);
+}
+
+async function tryAutoLogin() {
+  try {
+    state.user = await api('/api/me');
+    await showChat();
+  } catch {
+    showAuth();
+  }
 }
 
 function syncAuthMode() {
   const registering = state.authMode === 'register';
   const password = $('#password');
-  $('#auth-form button.primary').textContent = registering ? 'Create account' : 'Log in';
+  $('.submit-label').textContent = registering ? 'Create account' : 'Log in';
+  $('#auth-title').textContent = registering ? 'Create your account' : 'Welcome back';
+  $('#auth-subtitle').textContent = registering
+    ? 'Start a private workspace that remembers what matters.'
+    : 'Log in to continue your conversations.';
   $('#display-name-label').classList.toggle('hidden', !registering);
   $('#password-help').classList.toggle('hidden', !registering);
   password.autocomplete = registering ? 'new-password' : 'current-password';
@@ -74,166 +112,510 @@ function syncAuthMode() {
   }
 }
 
-$$('.tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.authMode = btn.dataset.mode;
-    $$('.tab').forEach((b) => b.classList.toggle('active', b === btn));
+$$('.tab').forEach((button) => {
+  button.addEventListener('click', () => {
+    state.authMode = button.dataset.mode;
+    $$('.tab').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    $('#auth-error').textContent = '';
     syncAuthMode();
   });
 });
 
-$('#auth-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
+$('#auth-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
   $('#auth-error').textContent = '';
-  const username = $('#username').value.trim();
-  const password = $('#password').value;
-  const displayName = $('#display-name').value.trim();
+  const submit = $('.auth-submit');
+  submit.disabled = true;
   try {
-    const endpoint = state.authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const body = state.authMode === 'login'
-      ? { username, password }
-      : { username, password, displayName: displayName || undefined };
-    const user = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
-    state.user = user;
+    const registering = state.authMode === 'register';
+    const body = {
+      username: $('#username').value.trim(),
+      password: $('#password').value,
+      ...(registering && $('#display-name').value.trim()
+        ? { displayName: $('#display-name').value.trim() }
+        : {}),
+    };
+    state.user = await api(registering ? '/api/auth/register' : '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
     await showChat();
-  } catch (err) {
-    $('#auth-error').textContent = err.message;
+  } catch (error) {
+    $('#auth-error').textContent = error.message;
+  } finally {
+    submit.disabled = false;
   }
 });
 
 $('#logout').addEventListener('click', async () => {
-  await api('/api/auth/logout', { method: 'POST' });
+  await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
   state.user = null;
   state.conversations = [];
+  state.memories = [];
+  state.capabilities = [];
   state.currentConversationId = null;
-  state.conversationLoadRequest += 1;
-  $('#messages').innerHTML = '';
+  $('#profile-menu').classList.add('hidden');
   showAuth();
 });
 
-// ---------- Sidebar tabs ----------
-$$('.side-tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    $$('.side-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    const tab = btn.dataset.tab;
-    $('#side-conversations').classList.toggle('hidden', tab !== 'conversations');
-    $('#side-memories').classList.toggle('hidden', tab !== 'memories');
-    if (tab === 'memories') refreshMemories();
-  });
+$('#profile-button').addEventListener('click', () => {
+  const menu = $('#profile-menu');
+  const open = menu.classList.toggle('hidden') === false;
+  $('#profile-button').setAttribute('aria-expanded', String(open));
 });
 
-// ---------- Conversations ----------
+$('#sidebar-collapse').addEventListener('click', () => {
+  $('#chat-view').classList.toggle('sidebar-collapsed');
+});
+
 function renderConversations() {
   const list = $('#side-conversations');
   list.innerHTML = '';
   if (state.conversations.length === 0) {
-    list.innerHTML = '<div class="empty-state">No chats yet. Start one &rarr;</div>';
+    list.innerHTML = '<div class="empty-state">Your conversations will appear here.</div>';
     return;
   }
-  for (const c of state.conversations) {
-    const btn = document.createElement('button');
-    btn.className = 'conv-item' + (c.id === state.currentConversationId ? ' active' : '');
-    btn.textContent = c.title;
-    btn.addEventListener('click', () => openConversation(c.id));
-    list.appendChild(btn);
+
+  for (const conversation of state.conversations.slice(0, 16)) {
+    const row = document.createElement('div');
+    row.className = 'conv-row';
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = `conv-item${conversation.id === state.currentConversationId ? ' active' : ''}`;
+    open.textContent = conversation.title || 'New chat';
+    open.title = conversation.title || 'New chat';
+    open.addEventListener('click', () => openConversation(conversation.id));
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'conv-menu';
+    remove.title = 'Delete chat';
+    remove.setAttribute('aria-label', `Delete ${conversation.title || 'chat'}`);
+    remove.innerHTML = '<span class="material-symbols-rounded">delete</span>';
+    remove.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      if (!window.confirm('Delete this conversation?')) return;
+      try {
+        await api(`/api/conversations/${conversation.id}`, { method: 'DELETE' });
+        if (state.currentConversationId === conversation.id) {
+          state.currentConversationId = null;
+          $('#messages').innerHTML = '';
+          setHomeMode(true);
+        }
+        await refreshConversations();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    row.append(open, remove);
+    list.appendChild(row);
   }
 }
 
-async function refreshConversations({ openDefault = false } = {}) {
+async function refreshConversations() {
   try {
     state.conversations = await api('/api/conversations');
-  } catch { state.conversations = []; }
-
-  if (state.currentConversationId && !state.conversations.some((c) => c.id === state.currentConversationId)) {
+  } catch {
+    state.conversations = [];
+  }
+  if (
+    state.currentConversationId &&
+    !state.conversations.some((conversation) => conversation.id === state.currentConversationId)
+  ) {
     state.currentConversationId = null;
-    state.conversationLoadRequest += 1;
-    $('#messages').innerHTML = '';
+    setHomeMode(true);
+  }
+  renderConversations();
+}
+
+function renderMessageContent(element, content) {
+  element.textContent = '';
+  for (const segment of parseMessageSegments(content)) {
+    if (!segment.url) {
+      element.appendChild(document.createTextNode(segment.text));
+      continue;
+    }
+    const link = document.createElement('a');
+    link.href = segment.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = segment.text;
+    element.appendChild(link);
+  }
+}
+
+function collectSources(content) {
+  const sources = [];
+  const seen = new Set();
+  for (const segment of parseMessageSegments(content)) {
+    if (!segment.url || seen.has(segment.url)) continue;
+    seen.add(segment.url);
+    const url = new URL(segment.url);
+    sources.push({
+      url: segment.url,
+      label: segment.text === segment.url ? url.hostname : segment.text,
+      host: url.hostname.replace(/^www\./, ''),
+    });
+  }
+  return sources;
+}
+
+function addBubble(role, content) {
+  const row = document.createElement('div');
+  row.className = `message-row ${role}`;
+
+  if (role === 'assistant') {
+    const avatar = document.createElement('span');
+    avatar.className = 'message-avatar';
+    avatar.innerHTML = '<span class="material-symbols-rounded">neurology</span>';
+    row.appendChild(avatar);
   }
 
-  renderConversations();
-  if (openDefault && !state.currentConversationId && state.conversations.length > 0) {
-    await openConversation(state.conversations[0].id);
-  }
+  const bubble = document.createElement('div');
+  bubble.className = `bubble ${role}`;
+  renderMessageContent(bubble, content);
+  row.appendChild(bubble);
+  $('#messages').appendChild(row);
+  $('#messages').scrollTop = $('#messages').scrollHeight;
+  return bubble;
 }
 
 async function openConversation(id) {
   const requestId = ++state.conversationLoadRequest;
   state.currentConversationId = id;
+  setActiveNav('chats');
+  closePanel();
+  setHomeMode(false);
   renderConversations();
-
-  const container = $('#messages');
-  container.innerHTML = '<div class="empty-state">Loading chat&hellip;</div>';
+  const conversation = state.conversations.find((item) => item.id === id);
+  $('#conversation-title').textContent = conversation?.title || 'Conversation';
+  $('#messages').innerHTML = '<div class="empty-state">Loading conversation…</div>';
 
   try {
     const messages = await api(`/api/conversations/${id}/messages`);
     if (requestId !== state.conversationLoadRequest || id !== state.currentConversationId) return;
-
-    container.innerHTML = '';
-    for (const m of messages) addBubble(m.role, m.content);
-    container.scrollTop = container.scrollHeight;
-  } catch (err) {
-    if (requestId !== state.conversationLoadRequest || id !== state.currentConversationId) return;
-    container.innerHTML = '';
-    const error = document.createElement('div');
-    error.className = 'empty-state';
-    error.textContent = `Could not load this chat: ${err.message}`;
-    container.appendChild(error);
+    $('#messages').innerHTML = '';
+    state.latestSources = [];
+    for (const message of messages) {
+      addBubble(message.role, message.content);
+      if (message.role === 'assistant') {
+        const sources = collectSources(message.content);
+        if (sources.length > 0) state.latestSources = sources;
+      }
+    }
+    renderContext();
+  } catch (error) {
+    if (requestId !== state.conversationLoadRequest) return;
+    $('#messages').innerHTML = `<div class="empty-state">Could not load this conversation: ${escapeHtml(error.message)}</div>`;
   }
 }
 
-$('#new-chat').addEventListener('click', async () => {
-  const c = await api('/api/conversations', { method: 'POST', body: JSON.stringify({}) });
-  state.conversations.unshift(c);
+$('#new-chat').addEventListener('click', () => {
+  state.currentConversationId = null;
+  state.conversationLoadRequest += 1;
+  state.latestSources = [];
+  $('#messages').innerHTML = '';
+  $('#chat-input').value = '';
+  closePanel();
+  setActiveNav('chats');
+  setHomeMode(true);
   renderConversations();
-  await openConversation(c.id);
+  renderContext();
+  $('#chat-input').focus();
 });
 
-// ---------- Messages ----------
-function renderMessageContent(element, content) {
-  element.textContent = '';
-  for (const segment of parseMessageSegments(content)) {
-    if (segment.url) {
+$$('.starter-card').forEach((button) => {
+  button.addEventListener('click', () => {
+    $('#chat-input').value = button.dataset.prompt || '';
+    autoSizeComposer();
+    $('#chat-input').focus();
+  });
+});
+
+function durableMemories() {
+  const seen = new Set();
+  return state.memories.filter((memory) => {
+    if (memory.kind === 'raw_turn') return false;
+    const key = `${memory.kind}:${memory.content.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function memoryLabel(memory) {
+  if (memory.kind === 'summary') return 'Summary';
+  if (/\bprefer|favorite|style|tone\b/i.test(memory.content)) return 'Preference';
+  return 'Remembered fact';
+}
+
+function renderContext() {
+  const sourceList = $('#source-list');
+  const sources = state.latestSources.slice(0, 5);
+  $('#source-count').textContent = String(sources.length);
+  sourceList.innerHTML = '';
+  if (sources.length === 0) {
+    sourceList.innerHTML = '<div class="drawer-empty">Sources from the latest web answer will appear here.</div>';
+  } else {
+    for (const source of sources) {
       const link = document.createElement('a');
-      link.href = segment.url;
+      link.className = 'source-card';
+      link.href = source.url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = segment.text;
-      element.appendChild(link);
-    } else {
-      element.appendChild(document.createTextNode(segment.text));
+      link.innerHTML = `<span><strong>${escapeHtml(source.label)}</strong><small>${escapeHtml(source.host)}</small></span><span class="material-symbols-rounded">open_in_new</span>`;
+      sourceList.appendChild(link);
+    }
+  }
+
+  const memories = durableMemories().slice(0, 4);
+  $('#memory-count').textContent = String(memories.length);
+  const memoryList = $('#drawer-memories');
+  memoryList.innerHTML = '';
+  if (memories.length === 0) {
+    memoryList.innerHTML = '<div class="drawer-empty">Useful details you ask me to remember will appear here.</div>';
+  } else {
+    for (const memory of memories) {
+      const card = document.createElement('article');
+      card.className = 'memory-card';
+      card.innerHTML = `<span class="memory-kind">${escapeHtml(memoryLabel(memory))}</span><p>${escapeHtml(memory.content)}</p>`;
+      memoryList.appendChild(card);
     }
   }
 }
 
-function addBubble(role, content) {
-  const div = document.createElement('div');
-  div.className = `bubble ${role}`;
-  renderMessageContent(div, content);
-  $('#messages').appendChild(div);
-  $('#messages').scrollTop = $('#messages').scrollHeight;
-  return div;
+async function refreshMemories() {
+  try {
+    state.memories = await api('/api/memories?limit=100');
+  } catch {
+    state.memories = [];
+  }
+  renderContext();
+  if (state.activePanel === 'memories') renderMemoryPanel();
 }
 
-$('#chat-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
+async function refreshCapabilities() {
+  try {
+    state.capabilities = await api('/api/capabilities');
+  } catch {
+    state.capabilities = [];
+  }
+  const latest = state.capabilities[0];
+  const label = $('.capability-activity span:nth-child(2)');
+  if (label) {
+    if (!latest) label.textContent = 'Capability activity';
+    else if (['pending', 'generating', 'validating'].includes(latest.status)) label.textContent = 'Capability in progress';
+    else if (latest.status === 'pr_opened') label.textContent = 'Draft PR ready';
+    else label.textContent = 'Capability activity';
+  }
+  if (state.activePanel === 'capabilities') renderCapabilitiesPanel();
+}
+
+function openContext() {
+  $('#chat-view').classList.remove('context-closed');
+  $('#context-toggle').setAttribute('aria-expanded', 'true');
+  $('#drawer-scrim').classList.remove('hidden');
+}
+
+function closeContext() {
+  $('#chat-view').classList.add('context-closed');
+  $('#context-toggle').setAttribute('aria-expanded', 'false');
+  $('#drawer-scrim').classList.add('hidden');
+}
+
+$('#context-toggle').addEventListener('click', () => {
+  if ($('#chat-view').classList.contains('context-closed')) openContext();
+  else closeContext();
+});
+$('#home-context-toggle').addEventListener('click', openContext);
+$('#mobile-context-toggle').addEventListener('click', openContext);
+$('#context-close').addEventListener('click', closeContext);
+$('#drawer-scrim').addEventListener('click', closeContext);
+
+function closePanel() {
+  $('#panel-view').classList.add('hidden');
+}
+
+function openPanel(panel) {
+  if (panel === 'chats') {
+    setActiveNav('chats');
+    closePanel();
+    if (state.currentConversationId) setHomeMode(false);
+    else setHomeMode(true);
+    return;
+  }
+
+  setActiveNav(panel);
+  $('#panel-view').classList.remove('hidden');
+  if (panel === 'memories') {
+    $('#panel-eyebrow').textContent = 'Your context';
+    $('#panel-title').textContent = 'Memories';
+    $('#panel-subtitle').textContent = 'Useful details you have shared. Raw chat history stays out of this view.';
+    renderMemoryPanel();
+  } else {
+    $('#panel-eyebrow').textContent = 'Safe self-improvement';
+    $('#panel-title').textContent = 'Capabilities';
+    $('#panel-subtitle').textContent = 'New tools are tested in a sandbox and opened as draft pull requests for human review.';
+    renderCapabilitiesPanel();
+  }
+}
+
+$$('[data-panel]').forEach((button) => {
+  if (button.matches('.starter-card')) return;
+  button.addEventListener('click', () => openPanel(button.dataset.panel));
+});
+$('#panel-close').addEventListener('click', () => openPanel('chats'));
+$('#mobile-back').addEventListener('click', () => {
+  state.currentConversationId = null;
+  setHomeMode(true);
+  renderConversations();
+});
+
+function renderMemoryPanel() {
+  const content = $('#panel-content');
+  const memories = durableMemories();
+  if (memories.length === 0) {
+    content.innerHTML = `
+      <div class="panel-empty"><div>
+        <span class="material-symbols-rounded">bookmark</span>
+        <h3>No durable memories yet</h3>
+        <p>Tell AGI-v1 to remember a preference, project detail, or other useful fact.</p>
+      </div></div>`;
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'panel-grid';
+  for (const memory of memories) {
+    const card = document.createElement('article');
+    card.className = 'panel-card';
+    card.innerHTML = `
+      <div class="panel-card-head">
+        <div><span class="memory-kind">${escapeHtml(memoryLabel(memory))}</span><h3>${escapeHtml(memory.content)}</h3></div>
+      </div>
+      <p>Saved ${formatDate(memory.createdAt)}</p>
+      <div class="panel-card-actions">
+        <button class="danger" type="button"><span class="material-symbols-rounded">delete</span>Forget</button>
+      </div>`;
+    card.querySelector('button').addEventListener('click', async () => {
+      try {
+        await api(`/api/memories/${memory.id}`, { method: 'DELETE' });
+        state.memories = state.memories.filter((item) => item.id !== memory.id);
+        renderMemoryPanel();
+        renderContext();
+        showToast('Memory forgotten.');
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+    grid.appendChild(card);
+  }
+  content.replaceChildren(grid);
+}
+
+function renderCapabilitiesPanel() {
+  const content = $('#panel-content');
+  if (state.capabilities.length === 0) {
+    content.innerHTML = `
+      <div class="panel-empty"><div>
+        <span class="material-symbols-rounded">code</span>
+        <h3>No capability activity yet</h3>
+        <p>If a safe task needs a missing tool, AGI-v1 can propose one as a tested draft PR.</p>
+      </div></div>`;
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'panel-grid';
+  for (const capability of state.capabilities) {
+    const card = document.createElement('article');
+    const statusClass = capability.status === 'failed' ? ' failed' : '';
+    const status = capability.status.replaceAll('_', ' ');
+    card.className = 'panel-card';
+    card.innerHTML = `
+      <div class="panel-card-head">
+        <h3>${escapeHtml(capability.task.replace(/^\[self-improvement\]\s*/i, ''))}</h3>
+        <span class="status-pill${statusClass}">${escapeHtml(status)}</span>
+      </div>
+      <p>${escapeHtml(capabilityStatusCopy(capability))}</p>
+      ${capability.pr_url
+        ? `<a href="${escapeHtml(capability.pr_url)}" target="_blank" rel="noopener noreferrer">Open draft PR <span class="material-symbols-rounded">open_in_new</span></a>`
+        : ''}`;
+    grid.appendChild(card);
+  }
+  content.replaceChildren(grid);
+}
+
+function capabilityStatusCopy(capability) {
+  if (capability.status === 'pr_opened') return 'Sandbox checks completed. The draft is waiting for human review.';
+  if (capability.status === 'validating') return 'Running generated and independent tests in an isolated sandbox.';
+  if (capability.status === 'generating') return 'Drafting the implementation and its test suite.';
+  if (capability.status === 'pending') return 'Queued to begin safely.';
+  return capability.error || 'The capability could not be completed.';
+}
+
+function formatDate(value) {
+  if (!value) return 'recently';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(value));
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function autoSizeComposer() {
+  const input = $('#chat-input');
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 150)}px`;
+}
+
+$('#chat-input').addEventListener('input', autoSizeComposer);
+$('#chat-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    $('#chat-form').requestSubmit();
+  }
+});
+
+$('#chat-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (state.sending) return;
   const input = $('#chat-input');
   const content = input.value.trim();
   if (!content) return;
+
+  state.sending = true;
+  $('.send-button').disabled = true;
   input.value = '';
-
-  // Ensure a conversation exists.
-  if (!state.currentConversationId) {
-    const c = await api('/api/conversations', { method: 'POST', body: JSON.stringify({}) });
-    state.currentConversationId = c.id;
-    state.conversations.unshift(c);
-    await refreshConversations();
-  }
-
-  addBubble('user', content);
-  const assistant = addBubble('assistant', '');
-  assistant.classList.add('thinking');
+  autoSizeComposer();
 
   try {
+    if (!state.currentConversationId) {
+      const conversation = await api('/api/conversations', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      state.currentConversationId = conversation.id;
+      state.conversations.unshift(conversation);
+      $('#conversation-title').textContent = content.split('\n')[0].slice(0, 60);
+      setHomeMode(false);
+      renderConversations();
+    }
+
+    addBubble('user', content);
+    const assistant = addBubble('assistant', '');
+    assistant.classList.add('thinking');
+    let assistantText = '';
+
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -242,20 +624,13 @@ $('#chat-form').addEventListener('submit', async (e) => {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const message = body.message || body.error || `Chat HTTP ${res.status}`;
       if (res.status === 401) {
-        assistant.classList.remove('thinking');
-        state.user = null;
-        state.currentConversationId = null;
-        state.conversationLoadRequest += 1;
-        showAuth();
-        $('#auth-error').textContent = 'Your session expired. Log in again to continue this chat.';
+        showAuth('Your session expired. Log in again to continue.');
         return;
       }
-      throw new Error(message);
+      throw new Error(body.message || body.error || `Chat failed (${res.status})`);
     }
 
-    // Read SSE stream
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -263,62 +638,56 @@ $('#chat-form').addEventListener('submit', async (e) => {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\n\n');
+      const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() || '';
       for (const frame of frames) {
-        const line = frame.split('\n').find((l) => l.startsWith('data: '));
+        const line = frame.split(/\r?\n/).find((item) => item.startsWith('data: '));
         if (!line) continue;
-        const data = line.slice(6);
-        if (data === '[DONE]') continue;
+        const raw = line.slice(6);
+        if (raw === '[DONE]') continue;
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.token) assistant.textContent += parsed.token;
-          else if (parsed.error) {
-            assistant.textContent += assistant.textContent
-              ? `\n\nError: ${parsed.error}`
-              : `Could not complete the reply: ${parsed.error}`;
+          const data = JSON.parse(raw);
+          if (data.token) {
+            assistantText += data.token;
+            assistant.textContent = assistantText;
+          } else if (data.error) {
+            throw new Error(data.error);
+          } else if (data.meta?.capabilityRecovery === 'started') {
+            showToast('A missing capability was detected. Safe generation has started.');
+          } else if (data.meta?.capabilityRecovery === 'completed') {
+            showToast('Capability draft is ready for human review.');
           }
-        } catch { /* ignore malformed frame */ }
+        } catch (error) {
+          if (error instanceof SyntaxError) continue;
+          throw error;
+        }
       }
     }
-    renderMessageContent(assistant, assistant.textContent);
+
+    if (!assistantText.trim()) throw new Error('The model returned no text. Please try again.');
+    renderMessageContent(assistant, assistantText);
     assistant.classList.remove('thinking');
-    await refreshMemories();
-    await refreshConversations();
-  } catch (err) {
-    assistant.textContent = `[error: ${err.message}]`;
-    assistant.classList.remove('thinking');
+    state.latestSources = collectSources(assistantText);
+    renderContext();
+    await Promise.all([
+      refreshConversations(),
+      refreshMemories(),
+      refreshCapabilities(),
+    ]);
+  } catch (error) {
+    const thinking = $('.bubble.assistant.thinking');
+    if (thinking) {
+      thinking.classList.remove('thinking');
+      thinking.textContent = `I couldn’t complete that reply. ${error.message}`;
+    }
+    showToast('The reply failed. Your message is still saved, so you can retry.');
+  } finally {
+    state.sending = false;
+    $('.send-button').disabled = false;
+    input.focus();
   }
 });
 
-$('#chat-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    $('#chat-form').requestSubmit();
-  }
-});
-
-// Go
-async function refreshMemories() {
-  try {
-    const memories = await api('/api/memories?limit=40');
-    const list = $('#side-memories');
-    list.innerHTML = '';
-    if (!memories || memories.length === 0) {
-      list.innerHTML = '<div class="empty-state">No memories yet.</div>';
-      return;
-    }
-    for (const m of memories) {
-      const item = document.createElement('div');
-      item.className = 'memory-item';
-      const kind = document.createElement('span');
-      kind.className = 'kind';
-      kind.textContent = m.kind;
-      item.appendChild(kind);
-      item.appendChild(document.createTextNode(m.content));
-      list.appendChild(item);
-    }
-  } catch { /* memories route not wired yet */ }
-}
-
+syncAuthMode();
+closeContext();
 tryAutoLogin();

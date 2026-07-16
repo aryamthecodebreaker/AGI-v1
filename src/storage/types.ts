@@ -59,6 +59,7 @@ export interface MemoryRepository {
   getById(id: string): MaybePromise<Memory | null>;
   listRecentByUser(userId: string, limit?: number): MaybePromise<Memory[]>;
   countByUser(userId: string): MaybePromise<number>;
+  delete(id: string, userId: string): MaybePromise<boolean>;
   touchAccessed(id: string): MaybePromise<void>;
   vectorSearch(
     userId: string,

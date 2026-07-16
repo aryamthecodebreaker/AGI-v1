@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { Storage } from '../../storage/index.js';
 import { requireAuth } from '../../auth/middleware.js';
 import { embed } from '../../llm/embeddings.js';
+import { Errors } from '../../util/errors.js';
 
 const listQuery = z.object({
   limit: z.coerce.number().int().positive().max(200).default(40),
@@ -53,5 +54,12 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
       vectorRank: h.vectorRank,
       ftsRank: h.ftsRank,
     }));
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/memories/:id', { preHandler: auth }, async (req) => {
+    const user = req.user!;
+    const deleted = await storage.memories.delete(req.params.id, user.id);
+    if (!deleted) throw Errors.notFound();
+    return { ok: true };
   });
 }
