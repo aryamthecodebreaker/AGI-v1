@@ -1,6 +1,7 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
+import { logger } from '../../logger.js';
 import { ids } from '../../util/ids.js';
-import { now } from '../../util/time.js';
+import { now, sleep } from '../../util/time.js';
 import { cosineSim } from '../vector.js';
 import type { ConversationRow } from '../repositories/conversationRepo.js';
 import type {
@@ -21,6 +22,16 @@ import { runPostgresMigrations } from './migrate.js';
 
 type Sql = NeonQueryFunction<false, false>;
 type DbValue = string | number | null;
+
+interface PostgresStorageOptions {
+  sqlFactory?: (databaseUrl: string) => Sql;
+  migrationRunner?: (sql: Sql) => Promise<void>;
+  retryWait?: (attempt: number) => Promise<void>;
+  maxAttempts?: number;
+}
+
+const POSTGRES_INIT_MAX_ATTEMPTS = 4;
+const POSTGRES_INIT_RETRY_DELAYS_MS = [500, 1_500, 3_500] as const;
 
 interface PostgresMemoryRow {
   id: string;
@@ -91,6 +102,47 @@ function toMemory(row: PostgresMemoryRow): Memory {
 function parseJson<T>(value: T | string, fallback: T): T {
   if (typeof value !== 'string') return value;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+function isTransientPostgresInitError(error: unknown): boolean {
+  const queue: unknown[] = [error];
+  const visited = new Set<unknown>();
+  const transientPattern =
+    /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|fetch failed|network error|socket hang up|connection terminated|connection timeout/iu;
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === null || current === undefined || visited.has(current)) continue;
+    visited.add(current);
+
+    if (typeof current === 'string') {
+      if (transientPattern.test(current)) return true;
+      continue;
+    }
+    if (typeof current !== 'object') continue;
+
+    const record = current as {
+      message?: unknown;
+      code?: unknown;
+      cause?: unknown;
+      errors?: unknown;
+    };
+    const description = [record.message, record.code]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ');
+    if (transientPattern.test(description)) return true;
+    if (record.cause !== undefined) queue.push(record.cause);
+    if (Array.isArray(record.errors)) queue.push(...record.errors);
+  }
+
+  return false;
+}
+
+async function waitBeforePostgresInitRetry(attempt: number): Promise<void> {
+  const delay = POSTGRES_INIT_RETRY_DELAYS_MS[
+    Math.min(attempt - 1, POSTGRES_INIT_RETRY_DELAYS_MS.length - 1)
+  ]!;
+  await sleep(delay);
 }
 
 function toPerson(row: PostgresPersonRow): Person {
@@ -443,9 +495,29 @@ function createPostgresRepos(sql: Sql): Omit<Storage, 'kind' | 'db'> {
   };
 }
 
-export async function createPostgresStorage(databaseUrl: string): Promise<Storage> {
-  const sql = neon(databaseUrl);
-  await runPostgresMigrations(sql);
+export async function createPostgresStorage(
+  databaseUrl: string,
+  options: PostgresStorageOptions = {},
+): Promise<Storage> {
+  const sql = (options.sqlFactory ?? neon)(databaseUrl);
+  const migrationRunner = options.migrationRunner ?? runPostgresMigrations;
+  const retryWait = options.retryWait ?? waitBeforePostgresInitRetry;
+  const maxAttempts = Math.max(1, options.maxAttempts ?? POSTGRES_INIT_MAX_ATTEMPTS);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await migrationRunner(sql);
+      break;
+    } catch (error) {
+      if (attempt >= maxAttempts || !isTransientPostgresInitError(error)) throw error;
+      logger.warn(
+        { err: error, attempt, maxAttempts },
+        'postgres initialization failed transiently; retrying',
+      );
+      await retryWait(attempt);
+    }
+  }
+
   return {
     kind: 'postgres',
     db: null,
