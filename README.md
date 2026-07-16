@@ -65,12 +65,13 @@ Memory ranking uses Reciprocal Rank Fusion to combine keyword and cosine-similar
 Capability building is disabled unless the deployment explicitly enables and configures it. It does not let the running app rewrite or merge `main`.
 
 1. A signed-in user sends `/build-tool <task>`, or normal chat detects that a safe request needs a missing offline tool.
-2. The LLM proposes one dependency-free Node.js tool, tests, and sample input as strict JSON.
-3. Static validation rejects environment, process, filesystem, network, child-process, worker, dynamic-import, and dynamic-code access.
-4. Vercel Sandbox runs syntax checks, `node:test`, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials.
-5. A GitHub App scoped only to this repository opens a new branch and draft pull request.
-6. A human reviews the PR and the protected-branch checks. The app has no merge endpoint.
-7. After the PR is merged to `main`, `/run-tool <slug> <json-input>` fetches that merged tool and executes it in another network-denied sandbox.
+2. The LLM proposes one dependency-free Node.js tool, author tests, and sample input as strict JSON.
+3. A separate adversarial reviewer receives the task, implementation, and tests. When the task names an RFC, AGI-v1 fetches that numbered document directly from the official RFC Editor and requires the reviewer to turn its normative requirements into independent executable tests.
+4. Static validation rejects environment, process, filesystem, network, child-process, worker, dynamic-import, and dynamic-code access in both test suites and the tool.
+5. Vercel Sandbox runs syntax checks, the author tests, the independent review tests, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials. One failed draft may be regenerated from the combined test output.
+6. A GitHub App scoped only to this repository publishes the generated tool, both test suites, evidence links, and README in one commit on a new draft pull request.
+7. A human reviews the PR and the protected-branch checks. Passing generated checks is not a standards certification, and the app has no merge endpoint.
+8. After the PR is merged to `main`, `/run-tool <slug> <json-input>` fetches that merged tool and executes it in another network-denied sandbox.
 
 Generated tools intentionally cannot access the network, files, production secrets, or arbitrary subprocesses. That limits what they can do, but keeps unreviewed code away from the application process and credentials.
 
@@ -82,7 +83,7 @@ Each user may have one active capability request at a time and may start at most
 
 1. A fresh Vercel Sandbox clones the public `main` branch and installs its already-reviewed dependencies without receiving application or GitHub credentials.
 2. Sandbox egress is switched to `deny-all`.
-3. FixMap 0.3.1 ranks the repository files and test route relevant to the goal.
+3. FixMap 0.4.0 ranks the repository files and test route relevant to the goal.
 4. The LLM receives that bounded context and returns strict JSON containing exact, unique text replacements for existing files or complete contents for new files. AGI-v1 materializes the proposal and generates the Git diff itself, avoiding model-invented line numbers and malformed patch headers. Static rules block dependency, auth, storage-migration, command-router/server, publishing, sandbox, and self-improvement-guardrail changes.
 5. Executable proposals must include regression tests. Git validates the generated diff, then the sandbox runs `npm test` and `npm run build` without network access.
 6. One failed proposal may be regenerated from the validation output. Only a passing proposal is published by the repository-scoped GitHub App as a draft PR.

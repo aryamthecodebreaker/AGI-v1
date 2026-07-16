@@ -8,7 +8,16 @@ import {
   parseCapabilityGapMarker,
 } from '../src/capabilities/autoRecovery.js';
 import { assertCapabilityEnabled } from '../src/capabilities/config.js';
-import { generateCapabilityDraft, validateCapabilityDraft } from '../src/capabilities/draft.js';
+import {
+  generateCapabilityDraft,
+  generateCapabilityReview,
+  validateCapabilityDraft,
+  validateCapabilityReview,
+} from '../src/capabilities/draft.js';
+import {
+  collectCapabilityEvidence,
+  referencedRfcNumbers,
+} from '../src/capabilities/evidence.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
 import { assertCapabilityCreationQuota } from '../src/capabilities/service.js';
 import type { CapabilityRequestRow } from '../src/storage/repositories/capabilityRequestRepo.js';
@@ -329,6 +338,81 @@ describe('capability draft validation', () => {
       ...safeDraft,
       sampleInput: 'one two three',
     })).toThrow();
+  });
+
+  it('requires an independent reviewer to have sufficient evidence', () => {
+    const review = {
+      evidenceStatus: 'sufficient',
+      summary: 'Exercises invalid inputs and boundary behavior independently.',
+      testCode: `import test from 'node:test';
+        import assert from 'node:assert/strict';
+        import { run } from './tool.mjs';
+        test('handles empty text', async () => assert.deepEqual(await run({ text: '' }), { count: 0 }));`,
+    };
+    expect(validateCapabilityReview(review).summary).toContain('independently');
+    expect(() => validateCapabilityReview({
+      ...review,
+      evidenceStatus: 'insufficient',
+    })).toThrow(/lacked sufficient evidence/);
+    expect(() => validateCapabilityReview(review, [], true))
+      .toThrow(/requires official evidence/);
+  });
+
+  it('grounds RFC reviews in the official RFC Editor document', async () => {
+    const calls: Array<{ messages: ChatMessage[]; webSearch: boolean }> = [];
+    const backend: LlmBackend = {
+      name: 'test:capability-review',
+      async ready() {},
+      async *generate() {},
+      async generateOnce(messages, opts) {
+        calls.push({ messages, webSearch: Boolean(opts?.webSearch) });
+        return JSON.stringify({
+          evidenceStatus: 'sufficient',
+          summary: 'Tests a normative Unicode error requirement from the official RFC.',
+          testCode: `import test from 'node:test';
+            import assert from 'node:assert/strict';
+            import { run } from './tool.mjs';
+            test('rejects a lone surrogate', async () => {
+              await assert.rejects(() => run({ text: '\\ud800' }));
+            });`,
+        });
+      },
+    };
+    const evidence = [{
+      title: 'RFC 8785',
+      url: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+      content: 'Occurrences of invalid Unicode data like lone surrogates MUST cause an error.',
+    }];
+
+    const review = await generateCapabilityReview(
+      'Canonicalize JSON according to RFC 8785',
+      safeDraft,
+      backend,
+      async () => evidence,
+    );
+
+    expect(review.sources).toEqual(evidence);
+    expect(calls[0]?.webSearch).toBe(false);
+    expect(calls[0]?.messages[1]?.content).toContain('rfc8785.txt');
+    expect(calls[0]?.messages[1]?.content).toContain('lone surrogates');
+  });
+
+  it('loads numbered RFC evidence from the fixed official host', async () => {
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      requested.push(String(input));
+      return new Response('RFC evidence '.repeat(20), {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      });
+    };
+
+    expect(referencedRfcNumbers('Implement RFC 8785 and RFC-8259')).toEqual(['8785', '8259']);
+    const evidence = await collectCapabilityEvidence('Implement RFC 8785', fetchImpl);
+    expect(requested).toEqual(['https://www.rfc-editor.org/rfc/rfc8785.txt']);
+    expect(evidence[0]?.content).toContain('RFC evidence');
+    await expect(collectCapabilityEvidence('Implement an RFC canonicalizer', fetchImpl))
+      .rejects.toThrow(/must name the RFC number/);
   });
 
   it('feeds sandbox failures back into one corrected generation request', async () => {

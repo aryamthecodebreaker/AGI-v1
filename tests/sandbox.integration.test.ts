@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { describe, expect, it } from 'vitest';
 import { validateAndExecuteInSandbox } from '../src/capabilities/sandbox.js';
-import { validateCapabilityDraft } from '../src/capabilities/draft.js';
+import { validateCapabilityDraft, validateCapabilityReview } from '../src/capabilities/draft.js';
 
 dotenv.config({ path: '.env.local' });
 
@@ -27,9 +27,20 @@ describe.skipIf(!shouldRun)('Vercel Sandbox integration', () => {
       sampleInput: { text: 'one two three' },
     });
 
-    const result = await validateAndExecuteInSandbox(draft);
+    const review = validateCapabilityReview({
+      evidenceStatus: 'sufficient',
+      summary: 'Adds an independent empty-input boundary test.',
+      testCode: `import test from 'node:test';
+        import assert from 'node:assert/strict';
+        import { run } from './tool.mjs';
+        test('counts no words in empty text', async () => {
+          assert.deepEqual(await run({ text: '' }), { count: 0 });
+        });`,
+    });
+
+    const result = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
     expect(result.passed).toBe(true);
-    expect(result.testOutput).toContain('pass 1');
+    expect(result.testOutput).toContain('pass 2');
     expect(JSON.parse(result.sampleOutput)).toEqual({ count: 3 });
   }, 90_000);
 
