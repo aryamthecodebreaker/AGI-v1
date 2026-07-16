@@ -194,6 +194,50 @@ describe('Brain orchestrator', () => {
     expect(metaEvent?.recentTurns).toBeGreaterThanOrEqual(0);
   });
 
+  it('answers direct self-fact recall from grounded memory without model selection', async () => {
+    const user = storage.users.create({ username: 'direct-recall', passwordHash: 'h' });
+    const sourceConversation = storage.conversations.create(user.id, 'Stored fact');
+    storage.memories.insert({
+      userId: user.id,
+      conversationId: sourceConversation.id,
+      kind: 'raw_turn',
+      content: 'USER: Remember that my launch code word is saffron comet.',
+      embedding: new Float32Array(384),
+    });
+    storage.memories.insert({
+      userId: user.id,
+      conversationId: sourceConversation.id,
+      kind: 'fact',
+      content: "The user's launch code word is saffron comet.",
+      embedding: new Float32Array(384),
+    });
+    storage.memories.insert({
+      userId: user.id,
+      conversationId: sourceConversation.id,
+      kind: 'fact',
+      content: "The user's launch code word is aryamthecodebreaker.",
+      embedding: new Float32Array(384),
+    });
+
+    const recallConversation = storage.conversations.create(user.id, 'Recall');
+    const backend = mockBackend([]);
+    backend.generate = async function* () {
+      throw new Error('the model should not be used for grounded direct recall');
+    };
+    const orchestrator = createOrchestrator(storage, backend);
+
+    let response = '';
+    for await (const event of orchestrator.handleUserMessage({
+      userId: user.id,
+      conversationId: recallConversation.id,
+      content: 'What is my launch code word? Reply with only the code word.',
+    })) {
+      if (event.type === 'token') response += event.data;
+    }
+
+    expect(response).toBe('saffron comet');
+  });
+
   it('conceals a capability-gap signal and automatically executes recovery', async () => {
     const user = storage.users.create({ username: 'recoverytest', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'Recovery test');

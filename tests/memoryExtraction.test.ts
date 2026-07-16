@@ -88,4 +88,34 @@ describe('durable memory extraction fallback', () => {
       ].sort());
     },
   );
+
+  it('does not store a lowercase value invented only by the assistant', async () => {
+    const user = storage.users.create({ username: 'grounding-test', passwordHash: 'h' });
+    const conversation = storage.conversations.create(user.id, 'Grounding test');
+    const source = storage.messages.insert({
+      userId: user.id,
+      conversationId: conversation.id,
+      role: 'user',
+      content: 'What is my launch code word?',
+    });
+
+    await extractAndStoreMemory(storage, extractionBackend(JSON.stringify({
+      people: [],
+      facts: [{
+        fact: "The user's launch code word is aryamthecodebreaker.",
+        people: [],
+      }],
+    })), {
+      userId: user.id,
+      conversationId: conversation.id,
+      sourceMessageId: source.id,
+      userMessage: source.content,
+      assistantMessage: 'aryamthecodebreaker',
+    });
+
+    expect(
+      storage.memories.listRecentByUser(user.id, 20)
+        .filter((memory) => memory.kind === 'fact'),
+    ).toEqual([]);
+  });
 });
