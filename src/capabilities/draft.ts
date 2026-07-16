@@ -151,21 +151,39 @@ export async function generateCapabilityDraft(
   const repairInstruction = repairFeedback
     ? `\n\nA previous draft failed sandbox validation. Return a corrected, complete draft. Keep toolCode, every run(...) call in testCode, and sampleInput on exactly the same object input contract.\nValidation failure:\n${repairFeedback.slice(0, 4_000)}`
     : '';
-  const messages: ChatMessage[] = [
-    { role: 'system', content: generationPrompt },
-    { role: 'user', content: `Requested capability:\n${task}${repairInstruction}` },
-  ];
   await llm.ready();
-  const raw = await llm.generateOnce(messages, { maxNewTokens: 1800, temperature: 0.15 });
-  const json = firstJsonObject(raw);
-  if (!json) throw new Error('The model did not return a JSON capability draft');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error('The model returned invalid JSON for the capability draft');
+  let formatInstruction = '';
+  let formatError = 'The model did not return a JSON capability draft';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: generationPrompt },
+      {
+        role: 'user',
+        content: `Requested capability:\n${task}${repairInstruction}${formatInstruction}`,
+      },
+    ];
+    const raw = await llm.generateOnce(messages, {
+      maxNewTokens: 3_200,
+      temperature: 0.15,
+      jsonObject: true,
+    });
+    const json = firstJsonObject(raw);
+    if (json) {
+      try {
+        return validateCapabilityDraft(JSON.parse(json));
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        formatError = 'The model returned invalid JSON for the capability draft';
+      }
+    }
+    formatInstruction = [
+      '',
+      '',
+      'Your previous response was not one complete valid JSON object.',
+      'Retry once. Return only the five required keys and ensure all code is escaped as JSON strings.',
+    ].join('\n');
   }
-  return validateCapabilityDraft(parsed);
+  throw new Error(formatError);
 }
 
 type EvidenceLoader = (task: string) => Promise<CapabilityEvidence[]>;
@@ -184,42 +202,56 @@ export async function generateCapabilityReview(
       source.content,
     ].join('\n')).join('\n\n')
     : 'No fixed official source was identified. Search the public web for authoritative evidence when needed.';
-  const messages: ChatMessage[] = [
-    { role: 'system', content: reviewPrompt },
-    {
-      role: 'user',
-      content: [
-        `Search the public web for official sources when the supplied evidence is not enough.`,
-        `Requested capability:\n${task}`,
-        `Generated implementation:\n${draft.toolCode}`,
-        `Author tests:\n${draft.testCode}`,
-        `Sample input:\n${JSON.stringify(draft.sampleInput)}`,
-        `Verification evidence:\n${officialEvidence}`,
-      ].join('\n\n'),
-    },
-  ];
   await llm.ready();
-  const raw = await llm.generateOnce(messages, {
-    maxNewTokens: 2_200,
-    temperature: 0.05,
-    jsonObject: true,
-    ...(sources.length === 0
-      ? {
-        webSearch: {
-          maxResults: 3,
-          maxTotalResults: 5,
-          maxCharactersPerResult: 3_000,
-        },
+  let formatInstruction = '';
+  let formatError = 'The reviewer did not return a JSON capability review';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: reviewPrompt },
+      {
+        role: 'user',
+        content: [
+          `Search the public web for official sources when the supplied evidence is not enough.`,
+          `Requested capability:\n${task}`,
+          `Generated implementation:\n${draft.toolCode}`,
+          `Author tests:\n${draft.testCode}`,
+          `Sample input:\n${JSON.stringify(draft.sampleInput)}`,
+          `Verification evidence:\n${officialEvidence}`,
+          formatInstruction,
+        ].filter(Boolean).join('\n\n'),
+      },
+    ];
+    const raw = await llm.generateOnce(messages, {
+      maxNewTokens: 2_800,
+      temperature: 0.05,
+      jsonObject: true,
+      ...(sources.length === 0
+        ? {
+          webSearch: {
+            maxResults: 3,
+            maxTotalResults: 5,
+            maxCharactersPerResult: 3_000,
+          },
+        }
+        : {}),
+    });
+    const json = firstJsonObject(raw);
+    if (json) {
+      try {
+        return validateCapabilityReview(
+          JSON.parse(json),
+          sources,
+          requiresOfficialCapabilityEvidence(task),
+        );
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        formatError = 'The reviewer returned invalid JSON for the capability review';
       }
-      : {}),
-  });
-  const json = firstJsonObject(raw);
-  if (!json) throw new Error('The reviewer did not return a JSON capability review');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error('The reviewer returned invalid JSON for the capability review');
+    }
+    formatInstruction = [
+      'Your previous response was not one complete valid JSON object.',
+      'Retry once with only evidenceStatus, summary, and testCode, escaping the test program as a JSON string.',
+    ].join(' ');
   }
-  return validateCapabilityReview(parsed, sources, requiresOfficialCapabilityEvidence(task));
+  throw new Error(formatError);
 }
