@@ -201,6 +201,14 @@ function createPostgresRepos(sql: Sql): Omit<Storage, 'kind' | 'db'> {
       );
       return asNumber(result[0]?.c ?? 0);
     },
+    async delete(id: string, userId: string): Promise<boolean> {
+      const result = await rows<{ id: string }>(
+        sql,
+        'DELETE FROM memories WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, userId],
+      );
+      return result.length > 0;
+    },
     async touchAccessed(id: string): Promise<void> {
       await sql.query('UPDATE memories SET last_accessed_at = $1 WHERE id = $2', [now(), id]);
     },

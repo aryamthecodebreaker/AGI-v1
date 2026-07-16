@@ -182,6 +182,19 @@ describe.sequential('HTTP route integration', () => {
       headers: { cookie: bob.cookie },
     });
     expect(bobPerson.statusCode).toBe(404);
+    const bobDeleteMemory = await app.inject({
+      method: 'DELETE',
+      url: `/api/memories/${memory.id}`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(bobDeleteMemory.statusCode).toBe(404);
+    const aliceDeleteMemory = await app.inject({
+      method: 'DELETE',
+      url: `/api/memories/${memory.id}`,
+      headers: { cookie: alice.cookie },
+    });
+    expect(aliceDeleteMemory.statusCode).toBe(200);
+    expect(await storage.memories.getById(memory.id)).toBeNull();
 
     const capabilities = await app.inject({
       method: 'GET',
