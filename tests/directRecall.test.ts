@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDirectMemoryRecall } from '../src/brain/directRecall.js';
+import type { Storage } from '../src/storage/index.js';
+import type { MessageRow } from '../src/storage/repositories/messageRepo.js';
 import type { Memory } from '../src/storage/repositories/memoryRepo.js';
 
 function memory(input: Partial<Memory> & Pick<Memory, 'id' | 'kind' | 'content'>): Memory {
@@ -15,67 +17,97 @@ function memory(input: Partial<Memory> & Pick<Memory, 'id' | 'kind' | 'content'>
   };
 }
 
+function userMessage(id: string, content: string): MessageRow {
+  return {
+    id,
+    conversation_id: 'c_test',
+    user_id: 'u_test',
+    role: 'user',
+    content,
+    token_count: null,
+    created_at: 0,
+  };
+}
+
+function storageWith(memories: Memory[], messages: MessageRow[]): Storage {
+  return {
+    memories: {
+      ftsSearch: async () => memories.map((item, index) => ({
+        memory: item,
+        score: 1 / (index + 1),
+      })),
+      listRecentByUser: async () => memories,
+    },
+    messages: {
+      getById: async (id: string) => messages.find((message) => message.id === id) ?? null,
+    },
+  } as unknown as Storage;
+}
+
 describe('direct long-term memory recall', () => {
-  it('prefers a user-grounded value over a newer poisoned fact', () => {
+  it('prefers a source-grounded value over a newer poisoned fact', async () => {
     const memories: Memory[] = [
       memory({
         id: 'poisoned',
         kind: 'fact',
         content: "The user's launch code word is aryamthecodebreaker.",
+        sourceMessageId: 'poison-source',
         createdAt: 40,
       }),
       memory({
         id: 'correct',
         kind: 'fact',
         content: "The user's launch code word is saffron comet.",
+        sourceMessageId: 'correct-source',
         createdAt: 30,
       }),
-      memory({
-        id: 'source',
-        kind: 'raw_turn',
-        content: 'USER: Remember that my launch code word is saffron comet.',
-        createdAt: 20,
-      }),
     ];
+    const storage = storageWith(memories, [
+      userMessage('poison-source', 'What is my launch code word?'),
+      userMessage('correct-source', 'Remember that my launch code word is saffron comet.'),
+    ]);
 
-    expect(resolveDirectMemoryRecall(
+    await expect(resolveDirectMemoryRecall(
+      storage,
+      'u_test',
       'What is my launch code word? Reply with only the code word.',
-      memories,
-    )).toBe('saffron comet');
+    )).resolves.toBe('saffron comet');
   });
 
-  it('uses the newest value when the user explicitly supplied multiple values', () => {
+  it('uses the newest value when the user explicitly supplied multiple values', async () => {
     const memories: Memory[] = [
       memory({
         id: 'new-fact',
         kind: 'fact',
         content: "The user's favorite color is teal.",
+        sourceMessageId: 'new-source',
         createdAt: 40,
-      }),
-      memory({
-        id: 'new-source',
-        kind: 'raw_turn',
-        content: 'USER: My favorite color is teal.',
-        createdAt: 35,
       }),
       memory({
         id: 'old-fact',
         kind: 'fact',
         content: "The user's favorite color is blue.",
+        sourceMessageId: 'old-source',
         createdAt: 20,
       }),
-      memory({
-        id: 'old-source',
-        kind: 'raw_turn',
-        content: 'USER: My favorite color is blue.',
-        createdAt: 15,
-      }),
     ];
+    const storage = storageWith(memories, [
+      userMessage('new-source', 'My favorite color is teal.'),
+      userMessage('old-source', 'My favorite color is blue.'),
+    ]);
 
-    expect(resolveDirectMemoryRecall('What is my favorite color?', memories)).toBe('teal');
+    await expect(resolveDirectMemoryRecall(
+      storage,
+      'u_test',
+      'What is my favorite color?',
+    )).resolves.toBe('teal');
   });
 
-  it('does not bypass the model for unrelated questions', () => {
-    expect(resolveDirectMemoryRecall('Tell me about color theory.', [])).toBeNull();
+  it('does not bypass the model for unrelated questions', async () => {
+    await expect(resolveDirectMemoryRecall(
+      storageWith([], []),
+      'u_test',
+      'Tell me about color theory.',
+    )).resolves.toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import type { Storage } from '../storage/index.js';
 import type { Memory } from '../storage/repositories/memoryRepo.js';
 import { contentIsGroundedInText, contentTokens } from './factGrounding.js';
 
@@ -35,29 +36,45 @@ function sameAttribute(left: string, right: string): boolean {
 /**
  * Resolve direct self-fact questions without asking the model to choose among
  * a people roster and retrieved facts. A candidate is trusted only when a
- * retrieved USER raw turn contains both its attribute and value; this also
- * ignores poisoned facts that were derived from assistant hallucinations.
+ * original source message is a USER message containing both its attribute and
+ * value. Using source-message provenance keeps recall correct even when the
+ * supporting raw-turn memory falls outside the semantic retrieval window.
  */
-export function resolveDirectMemoryRecall(
+export async function resolveDirectMemoryRecall(
+  storage: Storage,
+  userId: string,
   userMessage: string,
-  memories: Memory[],
-): string | null {
+): Promise<string | null> {
   const requestedAttribute = recallAttribute(userMessage);
   if (!requestedAttribute) return null;
 
-  const userTurns = memories
-    .filter((memory) => memory.kind === 'raw_turn' && /^USER:\s*/u.test(memory.content))
-    .map((memory) => memory.content.replace(/^USER:\s*/u, ''));
+  const searchHits = await storage.memories.ftsSearch(userId, requestedAttribute, 50);
+  let memories = searchHits.map((hit) => hit.memory);
+  if (!memories.some((memory) => parseSelfFact(memory) !== null)) {
+    memories = await storage.memories.listRecentByUser(userId, 200);
+  }
 
-  const grounded = memories
+  const candidates = memories
     .map(parseSelfFact)
     .filter((candidate): candidate is SelfFact =>
       candidate !== null
-      && sameAttribute(candidate.attribute, requestedAttribute)
-      && userTurns.some((turn) =>
-        contentIsGroundedInText(candidate.attribute, turn)
-        && contentIsGroundedInText(candidate.value, turn)))
+      && sameAttribute(candidate.attribute, requestedAttribute))
     .sort((left, right) => right.memory.createdAt - left.memory.createdAt);
 
-  return grounded[0]?.value ?? null;
+  for (const candidate of candidates) {
+    const sourceMessageId = candidate.memory.sourceMessageId;
+    if (!sourceMessageId) continue;
+
+    const source = await storage.messages.getById(sourceMessageId);
+    if (
+      source?.user_id === userId
+      && source.role === 'user'
+      && contentIsGroundedInText(candidate.attribute, source.content)
+      && contentIsGroundedInText(candidate.value, source.content)
+    ) {
+      return candidate.value;
+    }
+  }
+
+  return null;
 }
