@@ -149,7 +149,7 @@ export async function generateCapabilityDraft(
   repairFeedback?: string,
 ): Promise<CapabilityDraft> {
   const repairInstruction = repairFeedback
-    ? `\n\nA previous draft failed sandbox validation. Return a corrected, complete draft. Keep toolCode, every run(...) call in testCode, and sampleInput on exactly the same object input contract.\nValidation failure:\n${repairFeedback.slice(0, 4_000)}`
+    ? `\n\nA previous draft failed sandbox validation. Return a corrected, complete draft. Keep toolCode, every run(...) call in testCode, and sampleInput on exactly the same object input contract. The author-written test expectation may itself be wrong; reconcile it with the independent reviewer and official evidence instead of changing correct behavior to satisfy a bad assertion.\nValidation failure and independent review:\n${repairFeedback.slice(0, 8_000)}`
     : '';
   await llm.ready();
   let formatInstruction = '';

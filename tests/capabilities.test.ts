@@ -19,7 +19,10 @@ import {
   referencedRfcNumbers,
 } from '../src/capabilities/evidence.js';
 import { createGitHubAppJwt } from '../src/capabilities/github.js';
-import { assertCapabilityCreationQuota } from '../src/capabilities/service.js';
+import {
+  assertCapabilityCreationQuota,
+  buildCapabilityRepairFeedback,
+} from '../src/capabilities/service.js';
 import type { CapabilityRequestRow } from '../src/storage/repositories/capabilityRequestRepo.js';
 import {
   applyImprovementReplacements,
@@ -471,6 +474,28 @@ describe('capability draft validation', () => {
     expect(calls[0]?.messages[0]?.content).toContain('run(input) always receives exactly one JSON object');
     expect(calls[0]?.messages[1]?.content).toContain('previous draft failed sandbox validation');
     expect(calls[0]?.messages[1]?.content).toContain('same object input contract');
+    expect(calls[0]?.messages[1]?.content).toContain('author-written test expectation may itself be wrong');
+  });
+
+  it('keeps reviewer evidence and tests fixed in capability repair feedback', () => {
+    const feedback = buildCapabilityRepairFeedback({
+      evidenceStatus: 'sufficient',
+      summary: 'The official ordering example is the source of truth.',
+      testCode: `import test from 'node:test';
+        import { run } from './tool.mjs';
+        test('official order', async () => run({ data: {} }));`,
+      sources: [{
+        title: 'RFC 8785',
+        url: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+        content: 'official content',
+      }],
+    }, 'author assertion expected the wrong property order');
+
+    expect(feedback).toContain('fixed regression gate');
+    expect(feedback).toContain('official ordering example');
+    expect(feedback).toContain('rfc8785.txt');
+    expect(feedback).toContain("test('official order'");
+    expect(feedback).toContain('wrong property order');
   });
 
   it('retries one malformed provider response with stricter JSON instructions', async () => {

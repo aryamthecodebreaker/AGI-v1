@@ -68,7 +68,7 @@ Capability building is disabled unless the deployment explicitly enables and con
 2. The LLM proposes one dependency-free Node.js tool, author tests, and sample input as strict JSON.
 3. A separate adversarial reviewer receives the task, implementation, and tests. When the task names an RFC, AGI-v1 fetches that numbered document directly from the official RFC Editor and requires the reviewer to turn its normative requirements into independent executable tests.
 4. Static validation rejects environment, process, filesystem, network, child-process, worker, dynamic-import, and dynamic-code access in both test suites and the tool.
-5. Vercel Sandbox runs syntax checks, the author tests, the independent review tests, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials. One failed draft may be regenerated from the combined test output.
+5. Vercel Sandbox runs syntax checks, the author tests, the independent review tests, and one sample execution in a fresh non-persistent microVM with network policy `deny-all` and no credentials. Up to two failed drafts may be regenerated from the combined test output while the same independent reviewer tests remain fixed as a regression gate.
 6. A GitHub App scoped only to this repository publishes the generated tool, both test suites, evidence links, and README in one commit on a new draft pull request.
 7. A human reviews the PR and the protected-branch checks. Passing generated checks is not a standards certification, and the app has no merge endpoint.
 8. After the PR is merged to `main`, `/run-tool <slug> <json-input>` fetches that merged tool and executes it in another network-denied sandbox.
