@@ -44,7 +44,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@aryam/fixmap": "0.3.1",
+    "@aryam/fixmap": "0.4.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.11",
     "@types/jsonwebtoken": "^9.0.7",

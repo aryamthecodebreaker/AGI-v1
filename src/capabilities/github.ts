@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import type { CapabilityDraft } from './draft.js';
+import type { CapabilityDraft, CapabilityReview } from './draft.js';
 import type { SourceChange } from './improvement.js';
 import { capabilityRepository, getCapabilityGitHubConfig } from './config.js';
 
@@ -62,14 +62,27 @@ async function installationToken(): Promise<string> {
   return result.json.token;
 }
 
-function capabilityFiles(draft: CapabilityDraft, task: string): Array<{ path: string; content: string }> {
+function capabilityFiles(
+  draft: CapabilityDraft,
+  review: CapabilityReview,
+  task: string,
+): Array<{ path: string; content: string }> {
   const root = `generated-tools/${draft.slug}`;
+  const evidence = review.sources.length > 0
+    ? [
+      '',
+      '## Independent verification evidence',
+      '',
+      ...review.sources.map((source) => `- [${source.title}](${source.url})`),
+    ].join('\n')
+    : '';
   return [
     { path: `${root}/tool.mjs`, content: draft.toolCode },
     { path: `${root}/tool.test.mjs`, content: draft.testCode },
+    { path: `${root}/tool.review.test.mjs`, content: review.testCode },
     {
       path: `${root}/README.md`,
-      content: `# ${draft.slug}\n\n${draft.summary}\n\n## Requested task\n\n${task}\n\nThis generated tool is executed only inside a network-denied Vercel Sandbox.\n`,
+      content: `# ${draft.slug}\n\n${draft.summary}\n\n## Requested task\n\n${task}\n\n## Independent review\n\n${review.summary}${evidence}\n\nThis generated tool is executed only inside a network-denied Vercel Sandbox. Passing generated tests is not a certification; the draft still requires human review.\n`,
     },
   ];
 }
@@ -85,6 +98,7 @@ export async function publishCapabilityDraft(
   task: string,
   requestId: string,
   sandboxSummary: string,
+  review: CapabilityReview,
 ): Promise<PublishedCapability> {
   const config = getCapabilityGitHubConfig();
   const token = await installationToken();
@@ -92,30 +106,54 @@ export async function publishCapabilityDraft(
     `/repos/${config.owner}/${config.repo}/git/ref/heads/${config.baseBranch}`,
     token,
   );
+  const baseCommit = await githubRequest<{ tree: { sha: string } }>(
+    `/repos/${config.owner}/${config.repo}/git/commits/${ref.json.object.sha}`,
+    token,
+  );
   const branch = `agi/capability-${draft.slug}-${requestId.slice(-6)}`;
+  const treeEntries: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }> = [];
+  for (const file of capabilityFiles(draft, review, task)) {
+    const blob = await githubRequest<{ sha: string }>(
+      `/repos/${config.owner}/${config.repo}/git/blobs`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          content: Buffer.from(file.content).toString('base64'),
+          encoding: 'base64',
+        }),
+      },
+    );
+    treeEntries.push({ path: file.path, mode: '100644', type: 'blob', sha: blob.json.sha });
+  }
+  const tree = await githubRequest<{ sha: string }>(
+    `/repos/${config.owner}/${config.repo}/git/trees`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ base_tree: baseCommit.json.tree.sha, tree: treeEntries }),
+    },
+  );
+  const commit = await githubRequest<{ sha: string }>(
+    `/repos/${config.owner}/${config.repo}/git/commits`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message: `Add generated ${draft.slug} capability`,
+        tree: tree.json.sha,
+        parents: [ref.json.object.sha],
+      }),
+    },
+  );
   await githubRequest(
     `/repos/${config.owner}/${config.repo}/git/refs`,
     token,
     {
       method: 'POST',
-      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: ref.json.object.sha }),
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: commit.json.sha }),
     },
   );
-
-  for (const file of capabilityFiles(draft, task)) {
-    await githubRequest(
-      `/repos/${config.owner}/${config.repo}/contents/${file.path.split('/').map(encodeURIComponent).join('/')}`,
-      token,
-      {
-        method: 'PUT',
-        body: JSON.stringify({
-          message: `Add generated ${draft.slug} capability`,
-          content: Buffer.from(file.content).toString('base64'),
-          branch,
-        }),
-      },
-    );
-  }
 
   const pull = await githubRequest<{ html_url: string; number: number }>(
     `/repos/${config.owner}/${config.repo}/pulls`,
@@ -133,8 +171,16 @@ export async function publishCapabilityDraft(
           '',
           '## Safety',
           '- Generated code was tested and executed in a non-persistent Vercel Sandbox.',
+          '- A separate reviewer generated adversarial tests from the request and available official evidence.',
           '- Sandbox egress was set to deny-all and no credentials were injected.',
           '- This is a draft PR and cannot merge itself.',
+          '- Passing these checks is not a standards certification; human review remains required.',
+          '',
+          '## Independent review',
+          review.summary,
+          ...(review.sources.length > 0
+            ? ['', 'Evidence:', ...review.sources.map((source) => `- [${source.title}](${source.url})`)]
+            : []),
           '',
           '## Sandbox result',
           '```text',

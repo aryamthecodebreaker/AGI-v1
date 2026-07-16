@@ -1,5 +1,5 @@
 import { Sandbox } from '@vercel/sandbox';
-import type { CapabilityDraft } from './draft.js';
+import type { CapabilityDraft, CapabilityReview } from './draft.js';
 
 const OUTPUT_LIMIT = 12_000;
 const runnerCode = `import fs from 'node:fs/promises';
@@ -27,6 +27,7 @@ function bounded(value: string): string {
 export async function validateAndExecuteInSandbox(
   draft: CapabilityDraft,
   input: unknown = draft.sampleInput,
+  review?: CapabilityReview,
 ): Promise<CapabilitySandboxResult> {
   const sandbox = await Sandbox.create({
     runtime: 'node24',
@@ -41,6 +42,9 @@ export async function validateAndExecuteInSandbox(
     await sandbox.writeFiles([
       { path: 'tool.mjs', content: Buffer.from(draft.toolCode) },
       { path: 'tool.test.mjs', content: Buffer.from(draft.testCode) },
+      ...(review
+        ? [{ path: 'tool.review.test.mjs', content: Buffer.from(review.testCode) }]
+        : []),
       { path: 'runner.mjs', content: Buffer.from(runnerCode) },
       { path: 'input.json', content: Buffer.from(JSON.stringify(input)) },
     ]);
@@ -51,7 +55,11 @@ export async function validateAndExecuteInSandbox(
       return { passed: false, testOutput: syntaxOutput, sampleOutput: '' };
     }
 
-    const tests = await sandbox.runCommand('node', ['--test', 'tool.test.mjs']);
+    const tests = await sandbox.runCommand('node', [
+      '--test',
+      'tool.test.mjs',
+      ...(review ? ['tool.review.test.mjs'] : []),
+    ]);
     const testOutput = bounded(`${await tests.stdout()}${await tests.stderr()}`);
     if (tests.exitCode !== 0) {
       return { passed: false, testOutput, sampleOutput: '' };

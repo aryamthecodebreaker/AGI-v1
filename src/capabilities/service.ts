@@ -2,7 +2,11 @@ import type { Storage } from '../storage/index.js';
 import type { CapabilityRequestRow } from '../storage/repositories/capabilityRequestRepo.js';
 import { Errors } from '../util/errors.js';
 import { assertCapabilityEnabled, getCapabilityGitHubConfig } from './config.js';
-import { assertSafeCapabilityCode, generateCapabilityDraft } from './draft.js';
+import {
+  assertSafeCapabilityCode,
+  generateCapabilityDraft,
+  generateCapabilityReview,
+} from './draft.js';
 import { fetchMergedCapabilityCode, publishCapabilityDraft } from './github.js';
 import { publishSourceImprovement } from './github.js';
 import { generateAndValidateSourceImprovement } from './improvement.js';
@@ -77,19 +81,21 @@ export async function buildCapability(
   try {
     await storage.capabilityRequests.update(request.id, { status: 'generating' });
     let draft = await generateCapabilityDraft(task);
+    let review = await generateCapabilityReview(task, draft);
     await storage.capabilityRequests.update(request.id, {
       status: 'validating',
       slug: draft.slug,
     });
-    let sandbox = await validateAndExecuteInSandbox(draft);
+    let sandbox = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
     if (!sandbox.passed) {
       await storage.capabilityRequests.update(request.id, { status: 'generating' });
       draft = await generateCapabilityDraft(task, undefined, sandbox.testOutput);
+      review = await generateCapabilityReview(task, draft);
       await storage.capabilityRequests.update(request.id, {
         status: 'validating',
         slug: draft.slug,
       });
-      sandbox = await validateAndExecuteInSandbox(draft);
+      sandbox = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
     }
     const sandboxSummary = [sandbox.testOutput, `Sample output: ${sandbox.sampleOutput}`]
       .filter(Boolean)
@@ -102,6 +108,7 @@ export async function buildCapability(
       task,
       request.id,
       sandboxSummary,
+      review,
     );
     await storage.capabilityRequests.update(request.id, {
       status: 'pr_opened',
