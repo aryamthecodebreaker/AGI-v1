@@ -82,6 +82,13 @@ export function buildCapabilityRepairFeedback(
     ...(review.sources.length > 0
       ? [`Official evidence: ${review.sources.map((source) => source.url).join(', ')}`]
       : []),
+    ...(review.evidenceClaims.length > 0
+      ? [
+        'Official evidence excerpts:',
+        ...review.evidenceClaims.map((claim) =>
+          `- ${claim.testName}: ${claim.quote} (${claim.sourceUrl})`),
+      ]
+      : []),
     '',
     'Combined sandbox output:',
     testOutput,

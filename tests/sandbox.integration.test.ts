@@ -36,6 +36,7 @@ describe.skipIf(!shouldRun)('Vercel Sandbox integration', () => {
         test('counts no words in empty text', async () => {
           assert.deepEqual(await run({ text: '' }), { count: 0 });
         });`,
+      evidenceClaims: [],
     });
 
     const result = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
