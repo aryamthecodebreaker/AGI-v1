@@ -4,6 +4,7 @@ import { Errors } from '../util/errors.js';
 import { assertCapabilityEnabled, getCapabilityGitHubConfig } from './config.js';
 import {
   assertSafeCapabilityCode,
+  type CapabilityReview,
   generateCapabilityDraft,
   generateCapabilityReview,
 } from './draft.js';
@@ -19,6 +20,7 @@ const CREATION_WINDOW_MS = 60 * 60 * 1_000;
 const MAX_CREATIONS_PER_WINDOW = 2;
 const ACTIVE_REQUEST_TIMEOUT_MS = 15 * 60 * 1_000;
 const ACTIVE_STATUSES = new Set(['pending', 'generating', 'validating']);
+const MAX_CAPABILITY_VALIDATION_ATTEMPTS = 3;
 
 function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 4_000);
@@ -69,6 +71,26 @@ export interface SourceImprovementBuildResult {
   fixMapSummary: string;
 }
 
+export function buildCapabilityRepairFeedback(
+  review: CapabilityReview,
+  testOutput: string,
+): string {
+  return [
+    'The independent reviewer tests are a fixed regression gate and will be reused.',
+    'Do not assume the author-written expected values are correct when they conflict with official evidence.',
+    `Independent review summary: ${review.summary}`,
+    ...(review.sources.length > 0
+      ? [`Official evidence: ${review.sources.map((source) => source.url).join(', ')}`]
+      : []),
+    '',
+    'Combined sandbox output:',
+    testOutput,
+    '',
+    'Independent reviewer test code:',
+    review.testCode,
+  ].join('\n').slice(0, 12_000);
+}
+
 export async function buildCapability(
   storage: Storage,
   userId: string,
@@ -81,21 +103,25 @@ export async function buildCapability(
   try {
     await storage.capabilityRequests.update(request.id, { status: 'generating' });
     let draft = await generateCapabilityDraft(task);
-    let review = await generateCapabilityReview(task, draft);
-    await storage.capabilityRequests.update(request.id, {
-      status: 'validating',
-      slug: draft.slug,
-    });
-    let sandbox = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
-    if (!sandbox.passed) {
-      await storage.capabilityRequests.update(request.id, { status: 'generating' });
-      draft = await generateCapabilityDraft(task, undefined, sandbox.testOutput);
-      review = await generateCapabilityReview(task, draft);
+    const review = await generateCapabilityReview(task, draft);
+    let sandbox: Awaited<ReturnType<typeof validateAndExecuteInSandbox>> = {
+      passed: false,
+      testOutput: '',
+      sampleOutput: '',
+    };
+    for (let attempt = 0; attempt < MAX_CAPABILITY_VALIDATION_ATTEMPTS; attempt++) {
       await storage.capabilityRequests.update(request.id, {
         status: 'validating',
         slug: draft.slug,
       });
       sandbox = await validateAndExecuteInSandbox(draft, draft.sampleInput, review);
+      if (sandbox.passed || attempt === MAX_CAPABILITY_VALIDATION_ATTEMPTS - 1) break;
+      await storage.capabilityRequests.update(request.id, { status: 'generating' });
+      draft = await generateCapabilityDraft(
+        task,
+        undefined,
+        buildCapabilityRepairFeedback(review, sandbox.testOutput),
+      );
     }
     const sandboxSummary = [sandbox.testOutput, `Sample output: ${sandbox.sampleOutput}`]
       .filter(Boolean)
