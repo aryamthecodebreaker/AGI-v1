@@ -76,13 +76,25 @@ function capabilityFiles(
       ...review.sources.map((source) => `- [${source.title}](${source.url})`),
     ].join('\n')
     : '';
+  const evidenceClaims = review.evidenceClaims.length > 0
+    ? [
+      '',
+      '### Evidence-backed tests',
+      '',
+      ...review.evidenceClaims.map((claim) => {
+        const testName = claim.testName.replaceAll('`', '');
+        const quote = claim.quote.replace(/\s+/g, ' ').trim().slice(0, 500);
+        return `- \`${testName}\`: “${quote}” ([source](${claim.sourceUrl}))`;
+      }),
+    ].join('\n')
+    : '';
   return [
     { path: `${root}/tool.mjs`, content: draft.toolCode },
     { path: `${root}/tool.test.mjs`, content: draft.testCode },
     { path: `${root}/tool.review.test.mjs`, content: review.testCode },
     {
       path: `${root}/README.md`,
-      content: `# ${draft.slug}\n\n${draft.summary}\n\n## Requested task\n\n${task}\n\n## Independent review\n\n${review.summary}${evidence}\n\nThis generated tool is executed only inside a network-denied Vercel Sandbox. Passing generated tests is not a certification; the draft still requires human review.\n`,
+      content: `# ${draft.slug}\n\n${draft.summary}\n\n## Requested task\n\n${task}\n\n## Independent review\n\n${review.summary}${evidence}${evidenceClaims}\n\nThis generated tool is executed only inside a network-denied Vercel Sandbox. Passing generated tests is not a certification; the draft still requires human review.\n`,
     },
   ];
 }
@@ -180,6 +192,17 @@ export async function publishCapabilityDraft(
           review.summary,
           ...(review.sources.length > 0
             ? ['', 'Evidence:', ...review.sources.map((source) => `- [${source.title}](${source.url})`)]
+            : []),
+          ...(review.evidenceClaims.length > 0
+            ? [
+              '',
+              'Evidence-backed tests:',
+              ...review.evidenceClaims.map((claim) => {
+                const testName = claim.testName.replaceAll('`', '');
+                const quote = claim.quote.replace(/\s+/g, ' ').trim().slice(0, 500);
+                return `- \`${testName}\`: “${quote}” ([source](${claim.sourceUrl}))`;
+              }),
+            ]
             : []),
           '',
           '## Sandbox result',

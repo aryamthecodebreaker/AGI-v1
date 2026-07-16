@@ -343,6 +343,27 @@ describe('capability draft validation', () => {
     })).toThrow();
   });
 
+  it('rejects empty, skipped, and duplicate generated test suites', () => {
+    expect(() => validateCapabilityDraft({
+      ...safeDraft,
+      testCode: `import test from 'node:test';
+        import { run } from './tool.mjs';`,
+    })).toThrow(/static test names/);
+    expect(() => validateCapabilityDraft({
+      ...safeDraft,
+      testCode: `import test from 'node:test';
+        import { run } from './tool.mjs';
+        test.skip('does not really run', async () => run({ text: 'one' }));`,
+    })).toThrow(/may not skip/);
+    expect(() => validateCapabilityDraft({
+      ...safeDraft,
+      testCode: `import test from 'node:test';
+        import { run } from './tool.mjs';
+        test('same name', async () => run({ text: 'one' }));
+        test('same name', async () => run({ text: 'two' }));`,
+    })).toThrow(/unique test names/);
+  });
+
   it('requires an independent reviewer to have sufficient evidence', () => {
     const review = {
       evidenceStatus: 'sufficient',
@@ -351,6 +372,7 @@ describe('capability draft validation', () => {
         import assert from 'node:assert/strict';
         import { run } from './tool.mjs';
         test('handles empty text', async () => assert.deepEqual(await run({ text: '' }), { count: 0 }));`,
+      evidenceClaims: [],
     };
     expect(validateCapabilityReview(review).summary).toContain('independently');
     expect(() => validateCapabilityReview({
@@ -361,7 +383,7 @@ describe('capability draft validation', () => {
       .toThrow(/requires official evidence/);
   });
 
-  it('grounds RFC reviews in the official RFC Editor document', async () => {
+  it('audits RFC expectations against verbatim official evidence', async () => {
     const calls: Array<{ messages: ChatMessage[]; webSearch: boolean }> = [];
     const backend: LlmBackend = {
       name: 'test:capability-review',
@@ -369,22 +391,47 @@ describe('capability draft validation', () => {
       async *generate() {},
       async generateOnce(messages, opts) {
         calls.push({ messages, webSearch: Boolean(opts?.webSearch) });
-        return JSON.stringify({
-          evidenceStatus: 'sufficient',
-          summary: 'Tests a normative Unicode error requirement from the official RFC.',
-          testCode: `import test from 'node:test';
-            import assert from 'node:assert/strict';
-            import { run } from './tool.mjs';
-            test('rejects a lone surrogate', async () => {
-              await assert.rejects(() => run({ text: '\\ud800' }));
-            });`,
-        });
+        return JSON.stringify(calls.length === 1
+          ? {
+            evidenceStatus: 'sufficient',
+            summary: 'Tests the RFC number serialization example.',
+            testCode: `import test from 'node:test';
+              import assert from 'node:assert/strict';
+              import { run } from './tool.mjs';
+              test('serializes minus zero', async () => {
+                assert.equal((await run({ value: -0 })).canonical, '-0');
+              });`,
+            evidenceClaims: [{
+              testName: 'serializes minus zero',
+              sourceUrl: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+              quote: '8000000000000000         0  Minus zero',
+            }],
+          }
+          : {
+            evidenceStatus: 'sufficient',
+            summary: 'Checks the normative RFC example for minus zero.',
+            testCode: `import test from 'node:test';
+              import assert from 'node:assert/strict';
+              import { run } from './tool.mjs';
+              test('serializes minus zero', async () => {
+                assert.equal((await run({ value: -0 })).canonical, '0');
+              });`,
+            evidenceClaims: [{
+              testName: 'serializes minus zero',
+              sourceUrl: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+              quote: '8000000000000000         0  Minus zero',
+            }],
+          });
       },
     };
     const evidence = [{
       title: 'RFC 8785',
       url: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
-      content: 'Occurrences of invalid Unicode data like lone surrogates MUST cause an error.',
+      content: [
+        'Appendix B. Number Serialization Samples',
+        'IEEE 754     JSON Representation     Comment',
+        '8000000000000000         0  Minus zero',
+      ].join('\n'),
     }];
 
     const review = await generateCapabilityReview(
@@ -395,12 +442,50 @@ describe('capability draft validation', () => {
     );
 
     expect(review.sources).toEqual(evidence);
+    expect(review.testCode).toContain("canonical, '0'");
+    expect(review.testCode).not.toContain("canonical, '-0'");
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.webSearch).toBe(false);
     expect(calls[0]?.messages[1]?.content).toContain('rfc8785.txt');
-    expect(calls[0]?.messages[1]?.content).toContain('lone surrogates');
+    expect(calls[1]?.messages[0]?.content).toContain('first reviewer can misunderstand');
+    expect(calls[1]?.messages[1]?.content).toContain("canonical, '-0'");
+    expect(calls[1]?.messages[1]?.content).toContain('8000000000000000');
   });
 
-  it('retries one malformed reviewer response with stricter JSON instructions', async () => {
+  it('rejects RFC tests without matching verbatim evidence for every test', () => {
+    const sources = [{
+      title: 'RFC 8785',
+      url: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+      content: '8000000000000000         0  Minus zero',
+    }];
+    const review = {
+      evidenceStatus: 'sufficient',
+      summary: 'Checks minus zero and exponent formatting.',
+      testCode: `import test from 'node:test';
+        import assert from 'node:assert/strict';
+        import { run } from './tool.mjs';
+        test('serializes minus zero', async () => assert.equal((await run({ value: -0 })).canonical, '0'));
+        test('keeps positive exponent signs', async () => assert.equal((await run({ value: 1e23 })).canonical, '1e+23'));`,
+      evidenceClaims: [{
+        testName: 'serializes minus zero',
+        sourceUrl: sources[0]!.url,
+        quote: '8000000000000000         0  Minus zero',
+      }],
+    };
+
+    expect(() => validateCapabilityReview(review, sources, true))
+      .toThrow(/lack official evidence.*keeps positive exponent signs/);
+    expect(() => validateCapabilityReview({
+      ...review,
+      evidenceClaims: [{
+        testName: 'serializes minus zero',
+        sourceUrl: sources[0]!.url,
+        quote: 'a quote that is not in the official document',
+      }],
+    }, sources, true)).toThrow(/quote was not found/);
+  });
+
+  it('retries one schema-invalid reviewer response with stricter JSON instructions', async () => {
     const calls: ChatMessage[][] = [];
     const backend: LlmBackend = {
       name: 'test:capability-review-json-retry',
@@ -409,7 +494,13 @@ describe('capability draft validation', () => {
       async generateOnce(messages) {
         calls.push(messages);
         return calls.length === 1
-          ? 'The implementation needs more tests.'
+          ? JSON.stringify({
+            evidenceStatus: 'sufficient',
+            summary: 'Adds a boundary test independent from the author suite.',
+            testCode: `import test from 'node:test';
+              import { run } from './tool.mjs';
+              test('handles empty input', async () => run({ text: '' }));`,
+          })
           : JSON.stringify({
             evidenceStatus: 'sufficient',
             summary: 'Adds a boundary test independent from the author suite.',
@@ -419,6 +510,7 @@ describe('capability draft validation', () => {
               test('handles empty input', async () => {
                 assert.deepEqual(await run({ text: '' }), { count: 0 });
               });`,
+            evidenceClaims: [],
           });
       },
     };
@@ -431,6 +523,7 @@ describe('capability draft validation', () => {
     )).resolves.toMatchObject({ evidenceStatus: 'sufficient' });
     expect(calls).toHaveLength(2);
     expect(calls[1]?.[1]?.content).toContain('previous response was not one complete valid JSON object');
+    expect(calls[1]?.[1]?.content).toContain('failed validation');
   });
 
   it('loads numbered RFC evidence from the fixed official host', async () => {
@@ -484,6 +577,11 @@ describe('capability draft validation', () => {
       testCode: `import test from 'node:test';
         import { run } from './tool.mjs';
         test('official order', async () => run({ data: {} }));`,
+      evidenceClaims: [{
+        testName: 'official order',
+        sourceUrl: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
+        quote: 'JSON object properties MUST be sorted recursively',
+      }],
       sources: [{
         title: 'RFC 8785',
         url: 'https://www.rfc-editor.org/rfc/rfc8785.txt',
@@ -494,6 +592,7 @@ describe('capability draft validation', () => {
     expect(feedback).toContain('fixed regression gate');
     expect(feedback).toContain('official ordering example');
     expect(feedback).toContain('rfc8785.txt');
+    expect(feedback).toContain('JSON object properties MUST be sorted recursively');
     expect(feedback).toContain("test('official order'");
     expect(feedback).toContain('wrong property order');
   });
