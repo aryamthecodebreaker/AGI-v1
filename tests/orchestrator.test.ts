@@ -197,9 +197,16 @@ describe('Brain orchestrator', () => {
   it('answers direct self-fact recall from grounded memory without model selection', async () => {
     const user = storage.users.create({ username: 'direct-recall', passwordHash: 'h' });
     const sourceConversation = storage.conversations.create(user.id, 'Stored fact');
+    const correctSource = storage.messages.insert({
+      conversationId: sourceConversation.id,
+      userId: user.id,
+      role: 'user',
+      content: 'Remember that my launch code word is saffron comet.',
+    });
     storage.memories.insert({
       userId: user.id,
       conversationId: sourceConversation.id,
+      sourceMessageId: correctSource.id,
       kind: 'raw_turn',
       content: 'USER: Remember that my launch code word is saffron comet.',
       embedding: new Float32Array(384),
@@ -207,13 +214,21 @@ describe('Brain orchestrator', () => {
     storage.memories.insert({
       userId: user.id,
       conversationId: sourceConversation.id,
+      sourceMessageId: correctSource.id,
       kind: 'fact',
       content: "The user's launch code word is saffron comet.",
       embedding: new Float32Array(384),
     });
+    const poisonedSource = storage.messages.insert({
+      conversationId: sourceConversation.id,
+      userId: user.id,
+      role: 'user',
+      content: 'What is my launch code word? Reply with only the code word.',
+    });
     storage.memories.insert({
       userId: user.id,
       conversationId: sourceConversation.id,
+      sourceMessageId: poisonedSource.id,
       kind: 'fact',
       content: "The user's launch code word is aryamthecodebreaker.",
       embedding: new Float32Array(384),

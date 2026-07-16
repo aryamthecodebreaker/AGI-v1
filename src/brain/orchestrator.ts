@@ -172,7 +172,7 @@ export function createOrchestrator(
       let held = '';
       let streamMode: 'pending' | 'normal' | 'marker' = 'pending';
       try {
-        const directRecall = resolveDirectMemoryRecall(content, ctx.relevantMemories);
+        const directRecall = await resolveDirectMemoryRecall(storage, userId, content);
         if (directRecall) {
           assembled = directRecall;
           streamMode = 'normal';
