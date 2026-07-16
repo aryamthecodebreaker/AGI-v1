@@ -379,6 +379,10 @@ export function evidenceSystemMessage(evidence: WebEvidence, maxCharactersPerRes
 
 export function appendWebSources(content: string, sources: WebSource[]): string {
   if (sources.length === 0) return content;
+  // Preserve a model-curated URL response. Search providers can return
+  // incidental candidates that were not used to form the answer, and
+  // appending those as citations makes unrelated pages look authoritative.
+  if (/https?:\/\//i.test(content)) return content;
   const missing = sources.filter((source) => !content.includes(source.url));
   if (missing.length === 0) return content;
   return `${content.trim()}\n\nSources:\n${missing

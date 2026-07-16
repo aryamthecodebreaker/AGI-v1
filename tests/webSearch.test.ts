@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendWebSources,
   decodeHtml,
   isBlockedHostname,
   isPrivateAddress,
@@ -57,6 +58,15 @@ describe('provider-independent web search parsing', () => {
     expect(shouldSearchWeb('Tell me about Node.js')).toBe(false);
     expect(shouldSearchWeb('How are you?')).toBe(false);
     expect(shouldSearchWeb('Remember that my favorite color is blue.')).toBe(false);
+  });
+
+  it('does not append unused search candidates when the answer already supplies a URL', () => {
+    const answer = 'https://github.com/aryamthecodebreaker/FixMap';
+    expect(appendWebSources(answer, [{
+      title: 'Generic search page',
+      url: 'https://search.example/',
+      snippet: 'An unused search candidate.',
+    }])).toBe(answer);
   });
 
   it('blocks local hostnames and private network addresses', () => {
