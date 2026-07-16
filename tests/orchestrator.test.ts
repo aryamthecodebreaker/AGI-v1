@@ -74,11 +74,12 @@ describe('Brain orchestrator', () => {
     expect(vi.mocked(waitUntil).mock.calls[0]?.[0]).toBeInstanceOf(Promise);
   });
 
-  it('does not emit done until durable memory extraction finishes', async () => {
+  it('emits done while durable memory extraction continues in the background', async () => {
     const user = storage.users.create({ username: 'memoryfinal', passwordHash: 'h' });
     const conv = storage.conversations.create(user.id, 'Memory finalization test');
     let releaseExtraction!: (value: string) => void;
     let markExtractionStarted!: () => void;
+    let extractionFinished = false;
     const extractionStarted = new Promise<void>((resolve) => {
       markExtractionStarted = resolve;
     });
@@ -88,7 +89,9 @@ describe('Brain orchestrator', () => {
     const backend = mockBackend(['Reply text']);
     backend.generateOnce = async () => {
       markExtractionStarted();
-      return extractionResult;
+      const result = await extractionResult;
+      extractionFinished = true;
+      return result;
     };
     const orchestrator = createOrchestrator(storage, backend);
     let doneSeen = false;
@@ -103,10 +106,13 @@ describe('Brain orchestrator', () => {
     })();
 
     await extractionStarted;
-    expect(doneSeen).toBe(false);
-    releaseExtraction('{"people":[],"facts":[]}');
     await consume;
     expect(doneSeen).toBe(true);
+    expect(extractionFinished).toBe(false);
+
+    releaseExtraction('{"people":[],"facts":[]}');
+    await flushBackgroundTasks();
+    expect(extractionFinished).toBe(true);
   });
 
   it('creates conversation and persists user message', async () => {

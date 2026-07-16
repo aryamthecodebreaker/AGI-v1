@@ -307,10 +307,11 @@ export function createOrchestrator(
         });
       }
 
-      // 6. Finalize unified people + facts extraction. One LLM call
-      //    instead of two — critical for Gemini's free-tier RPM limits.
-      //    Reply text has streamed, but SSE completion waits for durable memory.
-      //    waitUntil also protects this task if the client disconnects.
+      // 6. Finalize unified people + facts extraction in the background. One
+      //    call instead of two is critical for Gemini's free-tier RPM limits.
+      //    The reply is already persisted, so do not hold the SSE stream open
+      //    for a second provider request. waitUntil keeps the extraction alive
+      //    after the response finishes on Vercel.
       const extractionTask = (async () => {
           try {
             const { extractAndStoreMemory } = await import('./memoryExtraction.js');
@@ -326,7 +327,6 @@ export function createOrchestrator(
           }
         })();
       trackBackground(extractionTask);
-      await extractionTask;
 
       yield { type: 'done' };
     },

@@ -89,7 +89,7 @@ Each user may have one active capability request at a time and may start at most
 
 The running app cannot push to `main`, merge a PR, edit its safeguards, access production secrets from generated code, or continuously modify itself without a signed-in user's request and human review.
 
-Reply text streams before hosted fact and people extraction runs, but AGI-v1 does not send the final SSE completion marker until durable memory work finishes. The same task is registered with Vercel's `waitUntil()` API so it can continue if the client disconnects during finalization. The unified extraction call requires JSON-object output so the free task fallback is limited to structured-output-capable models before AGI-v1 applies its own grounding checks.
+Reply text streams and the chat response closes as soon as the assistant message is persisted. Hosted fact and people extraction then continues outside the response path through Vercel's `waitUntil()` API, so a slow or rate-limited extraction model cannot leave the chat stuck in a sending state. Opening the Memories tab refreshes the durable results. The unified extraction call requires JSON-object output so the free task fallback is limited to structured-output-capable models before AGI-v1 applies its own grounding checks.
 
 ## Tech stack
 
