@@ -397,6 +397,39 @@ describe('capability draft validation', () => {
     expect(calls[0]?.messages[1]?.content).toContain('lone surrogates');
   });
 
+  it('retries one malformed reviewer response with stricter JSON instructions', async () => {
+    const calls: ChatMessage[][] = [];
+    const backend: LlmBackend = {
+      name: 'test:capability-review-json-retry',
+      async ready() {},
+      async *generate() {},
+      async generateOnce(messages) {
+        calls.push(messages);
+        return calls.length === 1
+          ? 'The implementation needs more tests.'
+          : JSON.stringify({
+            evidenceStatus: 'sufficient',
+            summary: 'Adds a boundary test independent from the author suite.',
+            testCode: `import test from 'node:test';
+              import assert from 'node:assert/strict';
+              import { run } from './tool.mjs';
+              test('handles empty input', async () => {
+                assert.deepEqual(await run({ text: '' }), { count: 0 });
+              });`,
+          });
+      },
+    };
+
+    await expect(generateCapabilityReview(
+      'Count words in supplied text',
+      safeDraft,
+      backend,
+      async () => [],
+    )).resolves.toMatchObject({ evidenceStatus: 'sufficient' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.[1]?.content).toContain('previous response was not one complete valid JSON object');
+  });
+
   it('loads numbered RFC evidence from the fixed official host', async () => {
     const requested: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {
@@ -416,13 +449,13 @@ describe('capability draft validation', () => {
   });
 
   it('feeds sandbox failures back into one corrected generation request', async () => {
-    const calls: ChatMessage[][] = [];
+    const calls: Array<{ messages: ChatMessage[]; jsonObject: boolean }> = [];
     const backend: LlmBackend = {
       name: 'test-capability-repair',
       async ready() {},
       async *generate() {},
-      async generateOnce(messages) {
-        calls.push(messages);
+      async generateOnce(messages, opts) {
+        calls.push({ messages, jsonObject: Boolean(opts?.jsonObject) });
         return JSON.stringify(safeDraft);
       },
     };
@@ -434,8 +467,27 @@ describe('capability draft validation', () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]?.content).toContain('run(input) always receives exactly one JSON object');
-    expect(calls[0]?.[1]?.content).toContain('previous draft failed sandbox validation');
-    expect(calls[0]?.[1]?.content).toContain('same object input contract');
+    expect(calls[0]?.jsonObject).toBe(true);
+    expect(calls[0]?.messages[0]?.content).toContain('run(input) always receives exactly one JSON object');
+    expect(calls[0]?.messages[1]?.content).toContain('previous draft failed sandbox validation');
+    expect(calls[0]?.messages[1]?.content).toContain('same object input contract');
+  });
+
+  it('retries one malformed provider response with stricter JSON instructions', async () => {
+    const calls: ChatMessage[][] = [];
+    const backend: LlmBackend = {
+      name: 'test-capability-json-retry',
+      async ready() {},
+      async *generate() {},
+      async generateOnce(messages) {
+        calls.push(messages);
+        return calls.length === 1 ? 'I cannot provide that JSON.' : JSON.stringify(safeDraft);
+      },
+    };
+
+    await expect(generateCapabilityDraft('Count words in supplied text', backend))
+      .resolves.toMatchObject({ slug: 'word-counter' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.[1]?.content).toContain('previous response was not one complete valid JSON object');
   });
 });
