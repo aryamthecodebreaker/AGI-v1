@@ -35,8 +35,11 @@ function formatMemories(
     let content = m.content.replace(/^USER:\s*/, '').trim();
     if (content.toLowerCase() === currentNormalized) continue;
 
+    // Skip an oversized memory rather than stopping: memories are independent
+    // facts ordered best-first, so one long one must not discard every
+    // lower-ranked fact behind it and leave most of the budget unused.
     const line = `- ${content}`;
-    if (used + line.length > MEMORY_MAX_CHARS) break;
+    if (used + line.length > MEMORY_MAX_CHARS) continue;
     lines.push(line);
     used += line.length + 1;
   }
@@ -51,7 +54,7 @@ function formatPeople(people: AssembledContext['people']): string {
     const rel = p.relationship ? ` (${p.relationship})` : '';
     const summary = p.summary ? ` — ${p.summary}` : '';
     const line = `- ${p.displayName}${rel}${summary}`;
-    if (used + line.length > PEOPLE_MAX_CHARS) break;
+    if (used + line.length > PEOPLE_MAX_CHARS) continue;
     lines.push(line);
     used += line.length + 1;
   }
