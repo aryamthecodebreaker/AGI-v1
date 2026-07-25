@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": null,
+  "regions": ["iad1"],
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "{public/**,src/storage/migrations/**,node_modules/onnxruntime-node/bin/napi-v3/linux/x64/**}",
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ],
+  "env": {
+    "NODE_ENV": "production",
+    "LLM_BACKEND": "gemini",
+    "LLM_MODEL_ID": "gemini-3-flash-preview",
+    "DATA_DIR": "/tmp/agi-data"
+  }
+}

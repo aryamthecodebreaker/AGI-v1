@@ -18,6 +18,7 @@ import { MEMORY_EXTRACTION_SYSTEM } from '../llm/prompts.js';
 import { embed } from '../llm/embeddings.js';
 import { canonicalize } from '../storage/repositories/personRepo.js';
 import { logger } from '../logger.js';
+import { isFactGroundedInUserMessage } from './factGrounding.js';
 
 export interface ExtractMemoryInput {
   userId: string;
@@ -40,21 +41,39 @@ interface ExtractedPayload {
   facts: ExtractedFact[];
 }
 
+const SENSITIVE_SELF_FACT_LABEL = /\b(?:password|passcode|pin|api\s*key|access\s*token|secret|credit\s*card|cvv)\b/i;
+
+/**
+ * Conservative, source-only fallback for explicit first-person facts. This is
+ * intentionally narrower than the LLM extractor: it only accepts clauses in
+ * the form "my <attribute> is/are <value>", and never stores common secrets.
+ * It gives durable memory a deterministic path when a free model returns an
+ * empty or malformed extraction response.
+ */
+export function extractExplicitSelfFacts(message: string): ExtractedFact[] {
+  const facts: ExtractedFact[] = [];
+  const clause = /\bmy\s+([\p{L}\p{N}][\p{L}\p{N}' -]{0,60}?)\s+(is|are)\s+(.+?)(?=\s*[,;]\s*(?:(?:and|but)\s+)?(?:my|I)\b|\s+(?:and|but)\s+(?:my|I)\b|[.!?\n]|$)/giu;
+
+  for (const match of message.matchAll(clause)) {
+    const attribute = match[1]?.trim().replace(/\s+/g, ' ');
+    const verb = match[2]?.toLowerCase();
+    const value = match[3]?.trim().replace(/\s+/g, ' ');
+    if (!attribute || !verb || !value || value.length > 120) continue;
+    if (SENSITIVE_SELF_FACT_LABEL.test(attribute)) continue;
+    facts.push({
+      fact: `The user's ${attribute} ${verb} ${value}.`,
+      people: [],
+    });
+  }
+
+  return facts;
+}
+
 // Names/tokens the LLM tends to invent instead of extracting.
 const NAME_STOPWORDS = new Set([
   'you','me','user','i','he','she','they','them','him','her','someone','anyone',
   'nobody','everyone','person','friend','people','mom','dad','mother','father',
 ]);
-// Common words that are NOT distinctive enough to require source-grounding.
-const FACT_STOPWORDS = new Set([
-  'User','The','A','An','I','It','He','She','They','We','You','My','His','Her',
-  'Their','Our','Your','Me','Him','Them','Us','This','That','These','Those',
-  'And','Or','But','So','If','When','Where','Why','How','What','Who','Which',
-  'Yes','No','Not','Nothing','Is','Are','Was','Were','Be','Been','Being','Have',
-  'Has','Had','Do','Does','Did','Will','Would','Can','Could','Should','May',
-  'Might','Must','Today','Yesterday','Tomorrow',
-]);
-
 export async function extractAndStoreMemory(
   storage: Storage,
   llm: LlmBackend,
@@ -68,23 +87,27 @@ export async function extractAndStoreMemory(
     },
   ];
 
-  let raw: string;
+  let payload: ExtractedPayload | null = null;
   try {
-    raw = await llm.generateOnce(messages, { maxNewTokens: 320, temperature: 0.1 });
+    const raw = await llm.generateOnce(messages, {
+      maxNewTokens: 320,
+      temperature: 0.1,
+      jsonObject: true,
+    });
+    payload = parseExtraction(raw);
+    if (!payload) {
+      logger.warn(
+        { responseLength: raw.length },
+        'memory extraction response was not parseable; trying source-only fallback',
+      );
+    }
   } catch (err) {
-    logger.warn({ err }, 'memory extraction LLM call failed');
-    return;
-  }
-
-  const payload = parseExtraction(raw);
-  if (!payload) {
-    logger.debug({ raw }, 'memory extraction: no parseable JSON');
-    return;
+    logger.warn({ err }, 'memory extraction LLM call failed; trying source-only fallback');
   }
 
   // --- People ---
   const userLower = input.userMessage.toLowerCase();
-  const groundedPeople = payload.people.filter((p) => {
+  const groundedPeople = (payload?.people ?? []).filter((p) => {
     const name = (p.name || '').trim();
     if (!name) return false;
     if (NAME_STOPWORDS.has(name.toLowerCase())) return false;
@@ -96,7 +119,7 @@ export async function extractAndStoreMemory(
 
   for (const p of groundedPeople) {
     try {
-      const person = storage.people.upsert({
+      const person = await storage.people.upsert({
         userId: input.userId,
         displayName: p.name.trim(),
         relationship:
@@ -115,23 +138,20 @@ export async function extractAndStoreMemory(
   const sourceTokensLower = new Set(
     input.userMessage.split(/[^\p{L}\p{N}]+/u).map((t) => t.toLowerCase()),
   );
-  const groundedFacts = payload.facts.filter((f) => {
-    const tokens = f.fact.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-    const distinctive = tokens.filter(
-      (t) => /^\d+$/.test(t) || (/^[A-Z]/.test(t) && !FACT_STOPWORDS.has(t)),
-    );
-    if (distinctive.length === 0) {
-      return tokens.some(
-        (t) => t.length >= 4 && sourceTokensLower.has(t.toLowerCase()),
-      );
-    }
-    for (const d of distinctive) {
-      if (!sourceTokensLower.has(d.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const groundedFacts = (payload?.facts ?? []).filter((f) =>
+    isFactGroundedInUserMessage(f.fact, input.userMessage));
 
-  for (const f of groundedFacts) {
+  const factsToStore = groundedFacts.length > 0
+    ? groundedFacts
+    : extractExplicitSelfFacts(input.userMessage);
+  if (groundedFacts.length === 0 && factsToStore.length > 0) {
+    logger.info(
+      { count: factsToStore.length },
+      'memory extraction used source-only explicit-fact fallback',
+    );
+  }
+
+  for (const f of factsToStore) {
     const content = f.fact.trim();
     if (!content) continue;
 
@@ -142,7 +162,7 @@ export async function extractAndStoreMemory(
       logger.warn({ err }, 'fact embed failed — storing without embedding');
     }
 
-    const mem = storage.memories.insert({
+    const mem = await storage.memories.insert({
       userId: input.userId,
       conversationId: input.conversationId,
       sourceMessageId: input.sourceMessageId,
@@ -159,9 +179,9 @@ export async function extractAndStoreMemory(
       try {
         const canonical = canonicalize(personName);
         const person =
-          storage.people.getByCanonical(input.userId, canonical) ??
-          storage.people.upsert({ userId: input.userId, displayName: personName });
-        storage.personMemories.link(person.id, mem.id);
+          await storage.people.getByCanonical(input.userId, canonical) ??
+          await storage.people.upsert({ userId: input.userId, displayName: personName });
+        await storage.personMemories.link(person.id, mem.id);
       } catch (err) {
         logger.warn({ err, personName }, 'person<->memory link failed');
       }

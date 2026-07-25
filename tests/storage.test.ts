@@ -74,6 +74,10 @@ describe('STORAGE brain', () => {
     for (let i = 0; i < EMBED_DIM; i++) {
       expect(Math.abs(round!.embedding![i]! - emb[i]!)).toBeLessThan(1e-6);
     }
+    const other = storage.users.create({ username: 'bob-other', passwordHash: 'h' });
+    expect(storage.memories.delete(mem.id, other.id)).toBe(false);
+    expect(storage.memories.delete(mem.id, user.id)).toBe(true);
+    expect(storage.memories.getById(mem.id)).toBeNull();
   });
 
   it('vector search ranks the closest memory first', () => {
@@ -129,5 +133,17 @@ describe('STORAGE brain', () => {
     const list = storage.personMemories.getMemoriesForPerson(sarah.id);
     expect(list.map((m) => m.id)).toContain(mem.id);
     expect(storage.personMemories.getPeopleIdsForMemory(mem.id)).toContain(sarah.id);
+  });
+
+  it('records capability build status for auditability', () => {
+    const user = storage.users.create({ username: 'owner', passwordHash: 'h' });
+    const request = storage.capabilityRequests.create(user.id, 'Build a safe word counter');
+    expect(request.status).toBe('pending');
+    const updated = storage.capabilityRequests.update(request.id, {
+      status: 'validating',
+      slug: 'word-counter',
+    });
+    expect(updated?.status).toBe('validating');
+    expect(storage.capabilityRequests.listByUser(user.id)).toHaveLength(1);
   });
 });

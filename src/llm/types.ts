@@ -14,6 +14,14 @@ export interface GenOpts {
   topP?: number;
   topK?: number;
   repetitionPenalty?: number;
+  /** Require a JSON object response for schema-validated background tasks. */
+  jsonObject?: boolean;
+  /** Let the hosted model decide when current web information is required. */
+  webSearch?: {
+    maxResults: number;
+    maxTotalResults: number;
+    maxCharactersPerResult: number;
+  };
   /** Abort signal — propagate from HTTP client disconnect. */
   signal?: AbortSignal;
 }
@@ -21,6 +29,9 @@ export interface GenOpts {
 export interface LlmBackend {
   /** Identifier for logs, e.g. 'transformers:SmolLM2-360M-Instruct'. */
   readonly name: string;
+
+  /** True only when this backend can use a model-controlled web-search tool. */
+  readonly supportsWebSearch?: boolean;
 
   /** Ensure the model is loaded. Safe to call repeatedly. */
   ready(): Promise<void>;

@@ -82,6 +82,9 @@ export function createMemoryRepo(db: DbType) {
   const countByUserStmt = db.prepare<[string]>(
     'SELECT COUNT(*) as c FROM memories WHERE user_id = ?',
   );
+  const deleteStmt = db.prepare<[string, string]>(
+    'DELETE FROM memories WHERE id = ? AND user_id = ?',
+  );
   // FTS join — returns memories whose FTS index matches. ORDER BY bm25 is the default FTS5 rank.
   const ftsStmt = db.prepare<[string, string, number]>(`
     SELECT m.*
@@ -119,21 +122,18 @@ export function createMemoryRepo(db: DbType) {
     countByUser(userId: string): number {
       return (countByUserStmt.get(userId) as { c: number }).c;
     },
+    delete(id: string, userId: string): boolean {
+      return deleteStmt.run(id, userId).changes > 0;
+    },
     touchAccessed(id: string): void {
       touchAccessedStmt.run(now(), id);
     },
-    /**
-     * Vector-space cosine similarity search.
-     *
-     * Strategy: pull up to `scanLimit` most-recent rows for the user, sort by cosine similarity to the query,
-     * return top-k. For tens of thousands of rows this is a few ms; later we can switch to a native vector
-     * extension if needed.
-     */
+    /** Vector-space cosine similarity search with bounded scan. */
     vectorSearch(
       userId: string,
       queryEmbedding: Float32Array,
       k: number,
-      scanLimit = 50_000,
+      scanLimit = 5000, // Reduced from 50K for better performance
     ): Array<{ memory: Memory; score: number }> {
       const rows = allByUserStmt.all(userId, scanLimit) as MemoryRow[];
       const scored: Array<{ memory: Memory; score: number }> = [];

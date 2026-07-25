@@ -9,25 +9,105 @@ import { requireAuth } from '../../auth/middleware.js';
 import { createOrchestrator } from '../../brain/orchestrator.js';
 import { startSse } from '../sse.js';
 import { logger } from '../../logger.js';
+import { parseCapabilityCommand } from '../../capabilities/commands.js';
+import { assertCapabilityEnabled } from '../../capabilities/config.js';
+import { buildCapability, improveSource, runMergedCapability } from '../../capabilities/service.js';
+import { Errors } from '../../util/errors.js';
 
 const chatSchema = z.object({
   conversationId: z.string().min(1),
   content: z.string().min(1).max(8000),
 });
 
+export function shouldAbortStreamOnResponseClose(writableEnded: boolean): boolean {
+  return !writableEnded;
+}
+
 export async function chatRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
   const auth = requireAuth(storage);
-  const orchestrator = createOrchestrator(storage);
 
-  app.post('/api/chat', { preHandler: auth }, async (req, reply) => {
+  app.post('/api/chat', { 
+    preHandler: auth,
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: 60000, // 30 requests per minute for chat
+      },
+    },
+  }, async (req, reply) => {
     const body = chatSchema.parse(req.body);
     const user = req.user!;
 
     // Verify the conversation belongs to this user.
-    const conv = storage.conversations.getById(body.conversationId);
+    const conv = await storage.conversations.getById(body.conversationId);
     if (!conv || conv.user_id !== user.id) {
       return reply.status(404).send({ error: 'conversation not found' });
     }
+
+    let capabilityCommand: ReturnType<typeof parseCapabilityCommand>;
+    try {
+      capabilityCommand = parseCapabilityCommand(body.content);
+    } catch (error) {
+      throw Errors.badRequest((error as Error).message);
+    }
+
+    if (capabilityCommand) {
+      assertCapabilityEnabled();
+      await storage.messages.insert({
+        conversationId: body.conversationId,
+        userId: user.id,
+        role: 'user',
+        content: body.content,
+      });
+      await storage.conversations.touch(body.conversationId);
+
+      const sse = startSse(reply);
+      sse.comment(capabilityCommand.type === 'build'
+        ? 'generating and validating capability'
+        : capabilityCommand.type === 'improve'
+          ? 'mapping, generating, and validating source improvement'
+          : 'running merged capability in sandbox');
+      try {
+        let responseText: string;
+        if (capabilityCommand.type === 'build') {
+          responseText = await buildCapability(storage, user.id, capabilityCommand.task).then((result) => [
+              `Built and tested ${result.slug} in a network-denied sandbox.`,
+              `Sample output: ${result.sampleOutput}`,
+              `Draft PR: ${result.prUrl}`,
+              'It cannot modify or merge main; review and merge the PR before using /run-tool.',
+            ].join('\n'));
+        } else if (capabilityCommand.type === 'improve') {
+          responseText = await improveSource(storage, user.id, capabilityCommand.task).then((result) => [
+            result.fixMapSummary,
+            `Changed files: ${result.changedFiles.join(', ')}`,
+            `Draft PR: ${result.prUrl}`,
+            'The patch passed tests and build in a network-denied sandbox. It cannot merge itself.',
+          ].join('\n'));
+        } else {
+          responseText = await runMergedCapability(
+            user.id,
+            capabilityCommand.slug,
+            capabilityCommand.input,
+          );
+        }
+
+        await storage.messages.insert({
+          conversationId: body.conversationId,
+          userId: user.id,
+          role: 'assistant',
+          content: responseText,
+        });
+        sse.send({ token: responseText });
+      } catch (error) {
+        logger.error({ err: error }, 'capability command failed');
+        sse.send({ error: (error as Error).message });
+      } finally {
+        sse.done();
+      }
+      return;
+    }
+
+    const orchestrator = createOrchestrator(storage);
 
     // Open an SSE stream.
     const sse = startSse(reply);
@@ -35,9 +115,12 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     // Propagate client-side disconnects into the orchestrator so we can stop
     // generating tokens as soon as the browser closes the connection.
     const abortController = new AbortController();
-    req.raw.on('close', () => {
-      abortController.abort();
-    });
+    const onResponseClose = () => {
+      if (shouldAbortStreamOnResponseClose(reply.raw.writableEnded)) {
+        abortController.abort();
+      }
+    };
+    reply.raw.on('close', onResponseClose);
 
     try {
       for await (const event of orchestrator.handleUserMessage({
@@ -55,6 +138,7 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
       logger.error({ err }, 'chat stream failed');
       sse.send({ error: (err as Error).message });
     } finally {
+      reply.raw.off('close', onResponseClose);
       sse.done();
     }
   });

@@ -12,8 +12,23 @@ Never say "I don't remember" or "I'm having trouble recalling" if the answer is 
 
 Keep replies concise and friendly.`;
 
-export function buildSystemPrompt(): string {
-  return SYSTEM_BASE;
+export interface SystemPromptOptions {
+  webSearchAvailable?: boolean;
+}
+
+const CAPABILITY_RECOVERY_INSTRUCTIONS = `If a safe user request genuinely requires an executable ability you do not have, do not stop at an apology. Output ONLY this internal signal:
+<capability-gap>{"kind":"tool","task":"a precise description of the missing offline input-to-output tool"}</capability-gap>
+Use kind "source" instead of "tool" when the missing ability requires changing AGI-v1 itself or integrating an external service.
+
+Never emit this signal for unsafe requests, missing user details, ordinary uncertainty, authentication or permission barriers, or requests that merely need an explanation. Do not mention the signal to the user.`;
+
+export function buildSystemPrompt(options: SystemPromptOptions = {}): string {
+  const webSearch = options.webSearchAvailable
+    ? `You have a web-search tool. Decide automatically when current or online information is needed, use the tool, and ground the answer with markdown source links. Never claim that you cannot browse the web while this tool is available.`
+    : '';
+  return [SYSTEM_BASE, webSearch, CAPABILITY_RECOVERY_INSTRUCTIONS]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /**

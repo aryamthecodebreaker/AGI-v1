@@ -1,30 +1,24 @@
 import type { Database as DbType } from 'better-sqlite3';
 import { getDb } from './db.js';
 import { runMigrations } from './migrate.js';
-import { createUserRepo, type UserRepo } from './repositories/userRepo.js';
-import { createConversationRepo, type ConversationRepo } from './repositories/conversationRepo.js';
-import { createMessageRepo, type MessageRepo } from './repositories/messageRepo.js';
-import { createMemoryRepo, type MemoryRepo } from './repositories/memoryRepo.js';
-import { createPersonRepo, type PersonRepo } from './repositories/personRepo.js';
-import { createPersonMemoryRepo, type PersonMemoryRepo } from './repositories/personMemoryRepo.js';
+import { createUserRepo } from './repositories/userRepo.js';
+import { createConversationRepo } from './repositories/conversationRepo.js';
+import { createMessageRepo } from './repositories/messageRepo.js';
+import { createMemoryRepo } from './repositories/memoryRepo.js';
+import { createPersonRepo } from './repositories/personRepo.js';
+import { createPersonMemoryRepo } from './repositories/personMemoryRepo.js';
+import { createCapabilityRequestRepo } from './repositories/capabilityRequestRepo.js';
+import { createPostgresStorage } from './postgres/index.js';
+import type { Storage } from './types.js';
 
-export interface Storage {
-  db: DbType;
-  users: UserRepo;
-  conversations: ConversationRepo;
-  messages: MessageRepo;
-  memories: MemoryRepo;
-  people: PersonRepo;
-  personMemories: PersonMemoryRepo;
-}
+export type { Storage } from './types.js';
 
-let singleton: Storage | null = null;
+let singleton: Promise<Storage> | null = null;
 
-export function initStorage(): Storage {
-  if (singleton) return singleton;
-  const db = getDb();
+function sqliteStorage(db: DbType): Storage {
   runMigrations(db);
-  singleton = {
+  return {
+    kind: 'sqlite',
     db,
     users: createUserRepo(db),
     conversations: createConversationRepo(db),
@@ -32,22 +26,28 @@ export function initStorage(): Storage {
     memories: createMemoryRepo(db),
     people: createPersonRepo(db),
     personMemories: createPersonMemoryRepo(db),
+    capabilityRequests: createCapabilityRequestRepo(db),
   };
-  return singleton;
+}
+
+export async function initStorage(): Promise<Storage> {
+  if (!singleton) {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    singleton = databaseUrl
+      ? createPostgresStorage(databaseUrl)
+      : Promise.resolve(sqliteStorage(getDb()));
+  }
+  try {
+    return await singleton;
+  } catch (error) {
+    singleton = null;
+    throw error;
+  }
 }
 
 /** Build a storage instance around an externally-provided db (for tests). */
 export function storageFromDb(db: DbType): Storage {
-  runMigrations(db);
-  return {
-    db,
-    users: createUserRepo(db),
-    conversations: createConversationRepo(db),
-    messages: createMessageRepo(db),
-    memories: createMemoryRepo(db),
-    people: createPersonRepo(db),
-    personMemories: createPersonMemoryRepo(db),
-  };
+  return sqliteStorage(db);
 }
 
 export function resetStorageSingleton(): void {

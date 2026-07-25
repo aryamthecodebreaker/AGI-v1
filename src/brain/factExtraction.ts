@@ -11,6 +11,7 @@ import { embed } from '../llm/embeddings.js';
 import { canonicalize } from '../storage/repositories/personRepo.js';
 import { logger } from '../logger.js';
 import { extractFirstJsonArray } from './entityExtraction.js';
+import { isFactGroundedInUserMessage } from './factGrounding.js';
 
 interface ExtractedFact {
   fact: string;
@@ -50,77 +51,6 @@ export async function extractAndStoreFacts(
     return;
   }
 
-  // Anti-hallucination guard: every distinctive token in the fact must
-  // appear in the source text. Distinctive = a number or a capitalized word
-  // that isn't a stopword. This is strict enough to catch "The user's
-  // birthday is August 3" when the source was "Her birthday is March 12".
-  const STOPWORDS = new Set([
-    'User',
-    'The',
-    'A',
-    'An',
-    'I',
-    'It',
-    'He',
-    'She',
-    'They',
-    'We',
-    'You',
-    'My',
-    'His',
-    'Her',
-    'Their',
-    'Our',
-    'Your',
-    'Me',
-    'Him',
-    'Them',
-    'Us',
-    'This',
-    'That',
-    'These',
-    'Those',
-    'And',
-    'Or',
-    'But',
-    'So',
-    'If',
-    'When',
-    'Where',
-    'Why',
-    'How',
-    'What',
-    'Who',
-    'Which',
-    'Yes',
-    'No',
-    'Not',
-    'Nothing',
-    'Is',
-    'Are',
-    'Was',
-    'Were',
-    'Be',
-    'Been',
-    'Being',
-    'Have',
-    'Has',
-    'Had',
-    'Do',
-    'Does',
-    'Did',
-    'Will',
-    'Would',
-    'Can',
-    'Could',
-    'Should',
-    'May',
-    'Might',
-    'Must',
-    'Today',
-    'Yesterday',
-    'Tomorrow',
-  ]);
   // Ground ONLY against the user message. We cannot trust the assistant's
   // own reply as source-of-truth — it may have hallucinated or rephrased
   // (e.g. turning "March 12" into "3/12"), and feeding those mutations back
@@ -129,24 +59,8 @@ export async function extractAndStoreFacts(
   const sourceTokensLower = new Set(
     sourceText.split(/[^\p{L}\p{N}]+/u).map((t) => t.toLowerCase()),
   );
-  const grounded = facts.filter((f) => {
-    const tokens = f.fact.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-    // Extract distinctive tokens: numbers and capitalized non-stopwords.
-    const distinctive = tokens.filter(
-      (t) => /^\d+$/.test(t) || (/^[A-Z]/.test(t) && !STOPWORDS.has(t)),
-    );
-    if (distinctive.length === 0) {
-      // No distinctive tokens — fall back to "any content word overlaps".
-      return tokens.some(
-        (t) => t.length >= 4 && sourceTokensLower.has(t.toLowerCase()),
-      );
-    }
-    // Every distinctive token must appear in the source text.
-    for (const d of distinctive) {
-      if (!sourceTokensLower.has(d.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const grounded = facts.filter((f) =>
+    isFactGroundedInUserMessage(f.fact, input.userMessage));
 
   for (const f of grounded) {
     const content = f.fact.trim();
@@ -159,7 +73,7 @@ export async function extractAndStoreFacts(
       logger.warn({ err }, 'fact embed failed — storing without embedding');
     }
 
-    const mem = storage.memories.insert({
+    const mem = await storage.memories.insert({
       userId: input.userId,
       conversationId: input.conversationId,
       sourceMessageId: input.sourceMessageId,
@@ -187,9 +101,9 @@ export async function extractAndStoreFacts(
       try {
         const canonical = canonicalize(personName);
         const person =
-          storage.people.getByCanonical(input.userId, canonical) ??
-          storage.people.upsert({ userId: input.userId, displayName: personName });
-        storage.personMemories.link(person.id, mem.id);
+          await storage.people.getByCanonical(input.userId, canonical) ??
+          await storage.people.upsert({ userId: input.userId, displayName: personName });
+        await storage.personMemories.link(person.id, mem.id);
       } catch (err) {
         logger.warn({ err, personName }, 'person<->memory link failed');
       }

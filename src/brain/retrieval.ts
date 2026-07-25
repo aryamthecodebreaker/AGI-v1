@@ -36,8 +36,8 @@ export async function assembleContext(
   const peopleLimit = input.peopleLimit ?? 6;
 
   // Short-term: recent turns in this conversation (chronological).
-  const recent = storage.messages
-    .listRecentByConversation(input.conversationId, recentLimit)
+  const recent = (await storage.messages
+    .listRecentByConversation(input.conversationId, recentLimit))
     .reverse();
 
   // Long-term: hybrid search across the user's entire memory store.
@@ -46,23 +46,23 @@ export async function assembleContext(
   let relevantMemories: Memory[] = [];
   try {
     const queryEmbedding = await embed(input.userMessage);
-    const hits = storage.memories.hybridSearch(
+    const hits = await storage.memories.hybridSearch(
       input.userId,
       input.userMessage,
       queryEmbedding,
       memoryK,
     );
     // Mark touched memories as accessed so we could later surface "frequently used" memories.
-    for (const h of hits) storage.memories.touchAccessed(h.memory.id);
+    await Promise.all(hits.map((h) => storage.memories.touchAccessed(h.memory.id)));
     relevantMemories = hits.map((h) => h.memory);
   } catch {
     // If embedding fails (e.g. model still downloading), fall back to FTS only.
-    const hits = storage.memories.ftsSearch(input.userId, input.userMessage, memoryK);
+    const hits = await storage.memories.ftsSearch(input.userId, input.userMessage, memoryK);
     relevantMemories = hits.map((h) => h.memory);
   }
 
   // People roster — most-recently-mentioned first.
-  const people = storage.people.listByUser(input.userId).slice(0, peopleLimit);
+  const people = (await storage.people.listByUser(input.userId)).slice(0, peopleLimit);
 
   return { recentTurns: recent, relevantMemories, people };
 }

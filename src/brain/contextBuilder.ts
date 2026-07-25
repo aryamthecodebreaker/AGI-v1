@@ -10,6 +10,7 @@ import type { AssembledContext } from './retrieval.js';
 export interface BuildPromptInput {
   context: AssembledContext;
   userMessage: string;
+  webSearchAvailable?: boolean;
 }
 
 const MEMORY_MAX_CHARS = 2500;
@@ -64,7 +65,10 @@ export function buildPrompt(input: BuildPromptInput): ChatMessage[] {
   const memoriesBlock = formatMemories(input.context.relevantMemories, input.userMessage);
   const peopleBlock = formatPeople(input.context.people);
 
-  const messages: ChatMessage[] = [{ role: 'system', content: buildSystemPrompt() }];
+  const messages: ChatMessage[] = [{
+    role: 'system',
+    content: buildSystemPrompt({ webSearchAvailable: input.webSearchAvailable }),
+  }];
 
   // Recent turns in chronological order (skip system; skip the very last user
   // turn because we'll re-send it below wrapped with retrieved context).

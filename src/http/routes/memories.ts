@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { Storage } from '../../storage/index.js';
 import { requireAuth } from '../../auth/middleware.js';
 import { embed } from '../../llm/embeddings.js';
+import { Errors } from '../../util/errors.js';
 
 const listQuery = z.object({
   limit: z.coerce.number().int().positive().max(200).default(40),
@@ -23,7 +24,7 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
   app.get('/api/memories', { preHandler: auth }, async (req) => {
     const user = req.user!;
     const q = listQuery.parse(req.query);
-    const rows = storage.memories.listRecentByUser(user.id, q.limit);
+    const rows = await storage.memories.listRecentByUser(user.id, q.limit);
     const filtered = q.kind ? rows.filter((r) => r.kind === q.kind) : rows;
     return filtered.map((m) => ({
       id: m.id,
@@ -43,7 +44,7 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
     } catch {
       /* fall back to FTS-only if embeddings unavailable */
     }
-    const hits = storage.memories.hybridSearch(user.id, q.q, queryEmbedding, q.k);
+    const hits = await storage.memories.hybridSearch(user.id, q.q, queryEmbedding, q.k);
     return hits.map((h) => ({
       id: h.memory.id,
       kind: h.memory.kind,
@@ -53,5 +54,12 @@ export async function memoryRoutes(app: FastifyInstance, storage: Storage): Prom
       vectorRank: h.vectorRank,
       ftsRank: h.ftsRank,
     }));
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/memories/:id', { preHandler: auth }, async (req) => {
+    const user = req.user!;
+    const deleted = await storage.memories.delete(req.params.id, user.id);
+    if (!deleted) throw Errors.notFound();
+    return { ok: true };
   });
 }
