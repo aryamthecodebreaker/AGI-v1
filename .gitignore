@@ -67,6 +67,14 @@ htmlcov/
 .env*.local
 .vitest-cache/
 
+# Runtime data: the SQLite database, WAL/SHM sidecars, downloaded model
+# weights and any local cookies. Never commit these — the database holds real
+# user accounts, conversations and device credentials.
+data/
+*.db
+*.sqlite
+*.sqlite3
+
 # Local editor / agent workspace config
 .claude/
 
