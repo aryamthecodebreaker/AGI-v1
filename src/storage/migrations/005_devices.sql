@@ -1,4 +1,4 @@
--- 004_devices.sql — AGI Command: device registry, pairing, commands, workflows.
+-- 005_devices.sql — AGI Command: device registry, pairing, commands, workflows.
 --
 -- Every table is owned by a user_id and cascades from users(id), so deleting a
 -- user removes their entire device graph. Nothing here is reachable without an
