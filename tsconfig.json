@@ -17,6 +17,6 @@
     "allowSyntheticDefaultImports": true,
     "types": ["node"]
   },
-  "include": ["src/**/*", "api/**/*", "scripts/**/*"],
+  "include": ["src/**/*", "api/**/*", "scripts/**/*", "agents/**/*.ts"],
   "exclude": ["node_modules", "dist", "data"]
 }

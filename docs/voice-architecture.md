@@ -1,0 +1,146 @@
+# Voice architecture
+
+Voice is an input method, not a separate product. Everything it produces goes
+through exactly the same chat turn as typed text, so anything you can say you can
+also type — and vice versa.
+
+---
+
+## Design constraints
+
+- **Push-to-talk only.** There is no always-listening mode, hidden or otherwise.
+  You hold the microphone button, or click it once to start and again to stop.
+- **Nothing is recorded.** With the browser backend, recognition happens on the
+  device and only the resulting text leaves the page. No audio is stored, ever.
+- **Text is never a second-class path.** If the microphone is unavailable or
+  permission is refused, the UI says so plainly and typing keeps working.
+
+---
+
+## Layers
+
+```mermaid
+flowchart TD
+    MIC[Microphone button] --> V[voice.js · provider-neutral interface]
+    V --> B1[Browser backend · Web Speech API]
+    V -. future .-> B2[Hosted STT/TTS]
+    V -. future .-> B3[Realtime multimodal voice]
+    B1 --> T[Transcript text]
+    T --> CHAT[POST /api/chat — identical to typing]
+    CHAT --> R[Assistant reply]
+    R --> SPK[speak: TTS if enabled]
+```
+
+[`public/voice.js`](../public/voice.js) defines the interface:
+
+```js
+{
+  sttAvailable, ttsAvailable,
+  startListening(), stopListening(),
+  speak(text), stopSpeaking(),
+  setSpeakingEnabled(bool)
+}
+```
+
+Adding a hosted provider means writing another object with this shape and
+selecting it — nothing in the command centre changes.
+
+A backend that is configured but not implemented reports itself unavailable and
+says so, rather than silently doing nothing.
+
+---
+
+## Configuration
+
+```dotenv
+VOICE_BACKEND=browser      # browser | none
+VOICE_STT_BACKEND=         # reserved for a hosted speech-to-text provider
+VOICE_TTS_BACKEND=         # reserved for a hosted text-to-speech provider
+```
+
+The server reports the selected backend at `GET /api/agi-command/status`, and the
+client builds the matching voice layer.
+
+`VOICE_BACKEND=none` disables voice entirely; the microphone button is disabled
+with an explanation.
+
+---
+
+## Browser backend
+
+Uses `SpeechRecognition` (`webkitSpeechRecognition` on Chromium) and
+`speechSynthesis`. Both are built into the browser: no key, no server round trip,
+no cost.
+
+- `continuous = false` — one utterance per press. This is what makes
+  push-to-talk real rather than cosmetic.
+- `interimResults = true` — the partial transcript is shown while you speak, so
+  you can see what it is hearing.
+- A fresh recognition instance per press, because reusing one across errors is
+  unreliable across browsers.
+
+Support is uneven. Safari and Firefox have historically had partial or absent
+`SpeechRecognition`. The UI detects this at runtime and disables the microphone
+with a message rather than failing on click.
+
+### Error handling
+
+| Condition | What the user sees |
+|---|---|
+| Permission refused | "Microphone permission was refused. You can still type." |
+| No microphone | "No microphone was found. You can still type." |
+| Nothing heard | "I did not hear anything." |
+| Not supported | Microphone button disabled, with a tooltip |
+
+---
+
+## States
+
+The orb and the status line show the same state, and the status line is always
+written in words — nothing is conveyed by motion or colour alone.
+
+```
+idle · listening · transcribing · thinking · confirming
+dispatching · executing · speaking · success · partial · error
+```
+
+`confirming`, `executing`, `success`, `partial` and `error` are driven by real
+command state, not by optimism: the orb only turns green once devices have
+actually reported.
+
+---
+
+## Accessibility
+
+- The microphone works with pointer hold **and** with click-to-toggle, so
+  keyboard and screen-reader users are not required to hold a key.
+- `Space` and `Enter` toggle listening when the button has focus.
+- Every icon button carries a visually hidden text label.
+- The transcript, status and command strip are `aria-live` regions.
+- The orb is `aria-hidden` — it is decoration, and its meaning is duplicated in
+  text.
+- Under `prefers-reduced-motion` the orb draws one static frame per state change
+  instead of animating, and CSS transitions across the app are reduced to near
+  zero.
+
+---
+
+## Spoken responses
+
+Replies are spoken when TTS is available and speaking is enabled. The **stop**
+button cancels speech immediately and returns the orb to idle.
+
+Confirmations are deliberately *not* auto-confirmed by voice: a spoken "yes"
+still goes through the same single-use, fingerprint-bound confirmation as a
+click.
+
+---
+
+## What is not implemented
+
+- No wake word, and none planned. Always-listening is the behaviour this design
+  specifically avoids.
+- No speaker identification or voice biometrics.
+- No server-side audio storage. There is no audio to store.
+- Hosted STT/TTS providers are stubs that report unavailable — the seam exists,
+  the implementations do not.

@@ -5,6 +5,9 @@
 //
 //   1. Insert the user's message into `messages`.
 //   2. Embed + persist it as a raw_turn memory (so it's immediately searchable).
+//   2b. If AGI Command is on, see whether this turn is a device request. If it
+//       is, the device layer answers from real device state and the LLM reply is
+//       skipped entirely.
 //   3. Retrieve relevant context (recent turns + hybrid search + people).
 //   4. Build the prompt and stream tokens from the LLM.
 //   5. Persist the assembled assistant reply as a message + raw_turn memory.
@@ -13,7 +16,7 @@
 // Steps 1-2 are synchronous so that even if the LLM crashes mid-stream, the
 // user's message is never lost.
 
-import type { Storage } from '../storage/index.js';
+import { isDeviceStorage, type Storage } from '../storage/index.js';
 import type { LlmBackend, ChatMessage } from '../llm/types.js';
 import { waitUntil } from '@vercel/functions';
 import { getLlmBackend } from '../llm/registry.js';
@@ -27,12 +30,16 @@ import {
 import { assembleContext } from './retrieval.js';
 import { buildPrompt } from './contextBuilder.js';
 import { resolveDirectMemoryRecall } from './directRecall.js';
+import type { AgiCommand } from '../devices/index.js';
+import { handleDeviceTurn } from './deviceTurn.js';
 
 export interface HandleUserMessageInput {
   userId: string;
   conversationId: string;
   content: string;
   signal?: AbortSignal;
+  /** The browser session's paired device, so "this device" can resolve. */
+  thisDeviceId?: string | null;
 }
 
 export interface OrchestratorEvent {
@@ -87,10 +94,27 @@ export interface Orchestrator {
 
 const CAPABILITY_MARKER_PREFIX = '<capability-gap>';
 
+/**
+ * Break text into small chunks on word boundaries so a locally-generated reply
+ * streams like an LLM one. Purely cosmetic — the whole string is already known.
+ */
+function* chunkText(text: string, size = 24): Generator<string> {
+  let buffer = '';
+  for (const word of text.split(/(\s+)/)) {
+    buffer += word;
+    if (buffer.length >= size) {
+      yield buffer;
+      buffer = '';
+    }
+  }
+  if (buffer) yield buffer;
+}
+
 export function createOrchestrator(
   storage: Storage,
   backend?: LlmBackend,
   recovery?: AutoCapabilityRecovery,
+  agi?: AgiCommand,
 ): Orchestrator {
   const llm = backend ?? getLlmBackend();
   const capabilityRecovery = recovery ?? (backend
@@ -142,6 +166,70 @@ export function createOrchestrator(
       if (!existingTitle || existingTitle === 'New chat') {
         const title = content.split('\n')[0]!.slice(0, 60) || 'New chat';
         await storage.conversations.rename(conversationId, title);
+      }
+
+      // 2b. Device turn. Runs before retrieval so a device request never pays
+      //     for embedding search it will not use. Any failure here falls through
+      //     to ordinary chat rather than breaking the turn.
+      // `agi.enabled` is only true when storage is a DeviceStorage, but narrow
+      // explicitly so the type system agrees rather than being told to.
+      if (agi?.enabled && isDeviceStorage(storage)) {
+        let deviceResult: Awaited<ReturnType<typeof handleDeviceTurn>> = { handled: false };
+        try {
+          deviceResult = await handleDeviceTurn({
+            agi,
+            storage,
+            llm,
+            userId,
+            conversationId,
+            messageId: userMsg.id,
+            content,
+            thisDeviceId: input.thisDeviceId ?? null,
+          });
+        } catch (err) {
+          logger.error({ err }, 'device turn failed — falling back to normal chat');
+        }
+
+        if (deviceResult.handled && deviceResult.text) {
+          yield { type: 'meta', meta: { ...deviceResult.meta, deviceTurn: true } };
+          for (const chunk of chunkText(deviceResult.text)) {
+            yield { type: 'token', data: chunk };
+          }
+
+          const assistantMsg = await storage.messages.insert({
+            conversationId,
+            userId,
+            role: 'assistant',
+            content: deviceResult.text,
+          });
+          // Store the exchange so it is searchable, but deliberately skip fact
+          // extraction: "Phone Two was offline" and "YouTube opened" are command
+          // history, not durable facts about the user. Command history lives in
+          // device_commands / device_executions where it can go stale safely.
+          try {
+            const vec = await embed(deviceResult.text);
+            await storage.memories.insert({
+              userId,
+              conversationId,
+              sourceMessageId: assistantMsg.id,
+              kind: 'raw_turn',
+              content: `ASSISTANT: ${deviceResult.text}`,
+              embedding: vec,
+            });
+          } catch (err) {
+            logger.warn({ err }, 'device reply embed failed');
+            await storage.memories.insert({
+              userId,
+              conversationId,
+              sourceMessageId: assistantMsg.id,
+              kind: 'raw_turn',
+              content: `ASSISTANT: ${deviceResult.text}`,
+            });
+          }
+
+          yield { type: 'done' };
+          return;
+        }
       }
 
       // 3. Retrieve context.

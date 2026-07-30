@@ -6,10 +6,14 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gateway": "tsx src/gateway/index.ts",
+    "gateway:start": "node dist/src/gateway/index.js",
+    "simulate-device": "tsx agents/simulated/cli.ts",
+    "agent:windows": "tsx agents/windows/index.ts",
     "warm": "tsx scripts/warm-models.ts",
     "smoke:gemini": "tsx scripts/smoke-gemini.ts",
     "smoke:web-search": "tsx scripts/smoke-web-search.ts",
@@ -41,6 +45,7 @@
     "nanoid": "^5.0.9",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
+    "ws": "^8.21.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -49,6 +54,7 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.9.0",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.1",
     "typescript": "^5.6.3",

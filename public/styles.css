@@ -1280,3 +1280,157 @@ form input:focus, form textarea:focus {
     left: 10px;
   }
 }
+
+/* ==========================================================================
+   AGI Command
+   Additive: uses the existing design tokens, adds no new palette.
+   ========================================================================== */
+
+.nav-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Presence in the composer ---------- */
+.agi-presence { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+#orb { width: 34px; height: 34px; flex: none; }
+.agi-state { font-size: 12px; color: var(--text-soft); }
+.gateway-badge {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border-soft); color: var(--muted); white-space: nowrap;
+}
+/* Tone is reinforced by the text inside, never carried by colour alone. */
+.gateway-badge.tone-ok { color: var(--green); border-color: rgba(110, 203, 139, 0.4); }
+.gateway-badge.tone-bad { color: var(--danger); border-color: rgba(241, 121, 130, 0.4); }
+.gateway-badge.tone-off { color: var(--muted); }
+
+.voice-button.active { border-color: var(--green); color: var(--green); }
+.voice-transcript {
+  width: 100%; margin-bottom: 8px; padding: 8px 12px;
+  font-size: 13px; color: var(--muted); font-style: italic;
+  background: var(--surface-2); border-radius: 10px;
+}
+
+/* ---------- Command strip ---------- */
+.command-strip {
+  margin: 0 clamp(16px, 4vw, 40px) 12px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+}
+.command-header { font-size: 12px; font-weight: 600; margin-bottom: 10px; color: var(--text-soft); }
+.execution-list { display: flex; flex-direction: column; gap: 5px; }
+.execution {
+  display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+  font-size: 12px; padding: 6px 10px; border-radius: 8px;
+  background: var(--surface); border-left: 3px solid var(--border);
+}
+.execution-device { font-weight: 600; min-width: 120px; }
+.execution-state { color: var(--muted); }
+.execution.tone-ok { border-left-color: var(--green); }
+.execution.tone-bad { border-left-color: var(--danger); }
+.execution.tone-warn { border-left-color: var(--amber); }
+.execution.tone-muted { border-left-color: var(--border); }
+.command-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+/* ---------- Confirmation ---------- */
+.confirmation-area { padding: 0 clamp(16px, 4vw, 40px); }
+.confirmation-card {
+  margin-bottom: 12px; padding: 16px 18px;
+  background: var(--surface-2); border: 1px solid var(--amber); border-radius: 14px;
+}
+.confirmation-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--amber);
+}
+.confirmation-summary {
+  font-size: 14px; margin: 10px 0 14px; white-space: pre-wrap; line-height: 1.55;
+}
+.confirmation-actions { display: flex; gap: 8px; }
+
+/* ---------- Panels: devices and workflows ---------- */
+.panel-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.panel-button {
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 14px; border-radius: 10px;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+}
+.panel-button:hover { border-color: var(--violet); }
+.panel-button.primary { background: var(--violet-strong); border-color: var(--violet-strong); color: #fff; }
+.panel-button.primary:hover { background: var(--violet); }
+.panel-button.danger:hover { border-color: var(--danger); color: var(--danger); }
+.panel-button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.panel-empty { color: var(--muted); font-size: 13px; padding: 20px 0; }
+.panel-error { color: var(--danger); font-size: 13px; min-height: 18px; }
+.panel-note {
+  margin-top: 20px; padding: 12px 14px;
+  font-size: 12px; line-height: 1.6; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 12px;
+}
+.panel-field { display: block; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+.panel-field input {
+  display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; font-family: inherit; font-size: 14px;
+}
+
+.device-card, .workflow-card {
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 10px;
+}
+.device-header { display: flex; align-items: center; gap: 10px; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.status-dot.online { background: var(--green); }
+.status-dot.offline { background: var(--muted); }
+.device-name { font-size: 14px; font-weight: 600; }
+.device-badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--violet); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+}
+.device-meta { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.device-caps { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.device-caps summary { cursor: pointer; }
+.cap-row { display: block; padding: 4px 0 4px 6px; color: var(--text-soft); font-size: 12px; }
+.device-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.workflow-steps-summary { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.6; }
+
+.pairing-box {
+  background: var(--surface-2); border: 1px solid var(--violet);
+  border-radius: 14px; padding: 16px; margin-bottom: 16px;
+}
+.pairing-code {
+  font-size: 28px; font-weight: 700; letter-spacing: 4px; text-align: center;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.pairing-help { font-size: 12px; color: var(--muted); margin: 10px 0 0; line-height: 1.6; }
+.pairing-example {
+  display: block; margin-top: 10px; padding: 10px; font-size: 11px;
+  background: var(--bg); border-radius: 8px; color: var(--text-soft);
+  word-break: break-all; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.workflow-editor { display: block; }
+.workflow-steps { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.workflow-step-row {
+  display: grid; grid-template-columns: 1.5fr 1fr 1fr auto; gap: 6px; align-items: center;
+}
+.workflow-step-row select, .workflow-step-row input {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  padding: 9px; border-radius: 10px; font-size: 12px; font-family: inherit; min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .workflow-step-row { grid-template-columns: 1fr; }
+  .agi-presence .gateway-badge { display: none; }
+}
+
+/* Respect the OS motion preference across the whole UI, not just the orb. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

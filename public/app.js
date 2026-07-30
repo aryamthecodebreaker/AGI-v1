@@ -1,4 +1,7 @@
 import { parseMessageSegments } from './messageLinks.js';
+import { createOrb } from './orb.js';
+import { createVoice } from './voice.js';
+import { createCommandCentre } from './agiCommand.js';
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -78,6 +81,7 @@ async function showChat() {
     refreshConversations(),
     refreshMemories(),
     refreshCapabilities(),
+    initAgiCommand(),
   ]);
 }
 
@@ -458,6 +462,20 @@ function openPanel(panel) {
     $('#panel-title').textContent = 'Memories';
     $('#panel-subtitle').textContent = 'Useful details you have shared. Raw chat history stays out of this view.';
     renderMemoryPanel();
+  } else if (panel === 'devices') {
+    $('#panel-eyebrow').textContent = 'AGI Command';
+    $('#panel-title').textContent = 'Devices';
+    $('#panel-subtitle').textContent =
+      'Devices you have paired, what each one can do, and whether it is reachable right now.';
+    commandCentre?.renderDevicePanel();
+    void commandCentre?.refreshDevices();
+  } else if (panel === 'flows') {
+    $('#panel-eyebrow').textContent = 'AGI Command';
+    $('#panel-title').textContent = 'Workflows';
+    $('#panel-subtitle').textContent =
+      'Reusable multi-device routines. Every step is an approved action, not a script, and a run asks once before it starts.';
+    commandCentre?.renderWorkflowPanel();
+    void commandCentre?.refreshWorkflows();
   } else {
     $('#panel-eyebrow').textContent = 'Safe self-improvement';
     $('#panel-title').textContent = 'Capabilities';
@@ -615,12 +633,19 @@ $('#chat-form').addEventListener('submit', async (event) => {
     const assistant = addBubble('assistant', '');
     assistant.classList.add('thinking');
     let assistantText = '';
+    let sawDeviceTurn = false;
+    setAgiState('thinking');
 
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ conversationId: state.currentConversationId, content }),
+      body: JSON.stringify({
+        conversationId: state.currentConversationId,
+        content,
+        // Lets "on this device" resolve to the browser, when it is registered.
+        thisDeviceId: commandCentre?.getBrowserDeviceId() ?? undefined,
+      }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -656,6 +681,8 @@ $('#chat-form').addEventListener('submit', async (event) => {
             showToast('A missing capability was detected. Safe generation has started.');
           } else if (data.meta?.capabilityRecovery === 'completed') {
             showToast('Capability draft is ready for human review.');
+          } else if (data.meta?.deviceTurn) {
+            sawDeviceTurn = handleDeviceMeta(data.meta) || sawDeviceTurn;
           }
         } catch (error) {
           if (error instanceof SyntaxError) continue;
@@ -667,6 +694,9 @@ $('#chat-form').addEventListener('submit', async (event) => {
     if (!assistantText.trim()) throw new Error('The model returned no text. Please try again.');
     renderMessageContent(assistant, assistantText);
     assistant.classList.remove('thinking');
+    voice?.speak(assistantText);
+    // A device turn sets its own state from real command results.
+    if (!sawDeviceTurn) setAgiState('idle');
     state.latestSources = collectSources(assistantText);
     renderContext();
     await Promise.all([
@@ -681,12 +711,165 @@ $('#chat-form').addEventListener('submit', async (event) => {
       thinking.textContent = `I couldn’t complete that reply. ${error.message}`;
     }
     showToast('The reply failed. Your message is still saved, so you can retry.');
+    setAgiState('error', error.message);
   } finally {
     state.sending = false;
     $('.send-button').disabled = false;
     input.focus();
   }
 });
+
+// ---------------------------------------------------------------------------
+// AGI Command
+//
+// Additive: when the server reports the feature off, none of this is shown and
+// the rest of AGI-v1 behaves exactly as before.
+// ---------------------------------------------------------------------------
+
+let orb = null;
+let voice = null;
+let commandCentre = null;
+
+const AGI_STATE_LABELS = {
+  idle: 'Idle',
+  listening: 'Listening',
+  transcribing: 'Transcribing',
+  thinking: 'Thinking',
+  confirming: 'Waiting for your confirmation',
+  dispatching: 'Sending to devices',
+  executing: 'Running on devices',
+  speaking: 'Speaking',
+  success: 'Done',
+  partial: 'Partly done',
+  error: 'Something went wrong',
+};
+
+function setAgiState(next, detail = '') {
+  orb?.setState(next);
+  const label = $('#agi-state');
+  if (label) label.textContent = detail || AGI_STATE_LABELS[next] || next;
+}
+
+/** Reacts to the orchestrator's meta frame. Returns true if it was device work. */
+function handleDeviceMeta(meta) {
+  if (meta.agiCommand === 'confirmation_required') {
+    setAgiState('confirming');
+    // The confirmation card itself arrives over the device stream.
+    return true;
+  }
+  if (meta.commandId) {
+    setAgiState('executing');
+    commandCentre?.showCommand(meta.commandId);
+    return true;
+  }
+  setAgiState('idle');
+  return true;
+}
+
+async function initAgiCommand() {
+  if (!commandCentre) {
+    commandCentre = createCommandCentre({ api, orb: null, setState: setAgiState, showToast });
+  }
+  const status = await commandCentre.init();
+  if (!status?.enabled) return;
+
+  if (!orb) orb = createOrb($('#orb'));
+  setAgiState('idle');
+
+  if (!voice) {
+    voice = createVoice({
+      backend: status.voice?.backend ?? 'browser',
+      onTranscript: (text) => {
+        $('#chat-input').value = text;
+        hideInterim();
+        // Send straight away: holding a button and then pressing send is worse
+        // than just acting on what was said.
+        $('#chat-form').requestSubmit();
+      },
+      onInterim: showInterim,
+      onState: (voiceState) => {
+        if (voiceState === 'listening') setAgiState('listening');
+        else if (voiceState === 'transcribing') setAgiState('transcribing');
+        else if (voiceState === 'speaking') setAgiState('speaking');
+        else if (!state.sending) setAgiState('idle');
+      },
+      onError: (message) => {
+        hideInterim();
+        setAgiState('idle');
+        showToast(message);
+      },
+    });
+    setupMic();
+  }
+}
+
+function showInterim(text) {
+  const node = $('#voice-transcript');
+  if (!node) return;
+  node.classList.remove('hidden');
+  node.textContent = text;
+}
+
+function hideInterim() {
+  const node = $('#voice-transcript');
+  if (!node) return;
+  node.classList.add('hidden');
+  node.textContent = '';
+}
+
+function setupMic() {
+  const mic = $('#mic-btn');
+  const stop = $('#stop-btn');
+  if (!mic || !stop) return;
+
+  mic.classList.remove('hidden');
+  if (!voice.sttAvailable) {
+    mic.disabled = true;
+    mic.title = 'Speech recognition is not available in this browser — type instead.';
+  }
+  if (voice.ttsAvailable) stop.classList.remove('hidden');
+
+  let listening = false;
+  const begin = () => {
+    if (listening || mic.disabled) return;
+    listening = true;
+    mic.setAttribute('aria-pressed', 'true');
+    mic.classList.add('active');
+    voice.startListening();
+  };
+  const end = () => {
+    if (!listening) return;
+    listening = false;
+    mic.setAttribute('aria-pressed', 'false');
+    mic.classList.remove('active');
+    voice.stopListening();
+  };
+
+  // Press and hold with a pointer…
+  mic.addEventListener('pointerdown', begin);
+  mic.addEventListener('pointerup', end);
+  mic.addEventListener('pointerleave', end);
+  // …or click once to start and again to stop, which is what keyboard and
+  // screen-reader users get.
+  mic.addEventListener('click', (event) => {
+    if (event.detail !== 0) return; // a pointer press already handled this
+    if (listening) end();
+    else begin();
+  });
+  mic.addEventListener('keydown', (event) => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      if (listening) end();
+      else begin();
+    }
+  });
+
+  stop.addEventListener('click', () => {
+    voice.stopSpeaking();
+    end();
+    setAgiState('idle');
+  });
+}
 
 syncAuthMode();
 closeContext();

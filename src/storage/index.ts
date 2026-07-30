@@ -8,12 +8,44 @@ import { createMemoryRepo } from './repositories/memoryRepo.js';
 import { createPersonRepo } from './repositories/personRepo.js';
 import { createPersonMemoryRepo } from './repositories/personMemoryRepo.js';
 import { createCapabilityRequestRepo } from './repositories/capabilityRequestRepo.js';
+// AGI Command — SQLite only, see deviceRepositories() below.
+import { createDeviceRepo } from './repositories/deviceRepo.js';
+import { createDeviceCredentialRepo } from './repositories/deviceCredentialRepo.js';
+import { createPairingRepo } from './repositories/pairingRepo.js';
+import { createDeviceGroupRepo } from './repositories/deviceGroupRepo.js';
+import { createCommandRepo } from './repositories/commandRepo.js';
+import { createExecutionRepo } from './repositories/executionRepo.js';
+import { createConfirmationRepo } from './repositories/confirmationRepo.js';
+import { createDeviceEventRepo } from './repositories/deviceEventRepo.js';
+import { createWorkflowRepo } from './repositories/workflowRepo.js';
 import { createPostgresStorage } from './postgres/index.js';
-import type { Storage } from './types.js';
+import type { DeviceRepositories, DeviceStorage, Storage } from './types.js';
 
-export type { Storage } from './types.js';
+export type { Storage, DeviceStorage } from './types.js';
 
 let singleton: Promise<Storage> | null = null;
+
+/**
+ * The AGI Command repositories.
+ *
+ * Deliberately SQLite-only. Device control already requires a long-running
+ * gateway process, so it cannot run on the serverless Postgres deployment path
+ * anyway — providing half-working Postgres implementations would be a worse lie
+ * than saying so plainly. `isDeviceStorage()` is how callers check.
+ */
+function deviceRepositories(db: DbType): DeviceRepositories {
+  return {
+    devices: createDeviceRepo(db),
+    deviceCredentials: createDeviceCredentialRepo(db),
+    pairings: createPairingRepo(db),
+    deviceGroups: createDeviceGroupRepo(db),
+    commands: createCommandRepo(db),
+    executions: createExecutionRepo(db),
+    confirmations: createConfirmationRepo(db),
+    deviceEvents: createDeviceEventRepo(db),
+    workflows: createWorkflowRepo(db),
+  };
+}
 
 function sqliteStorage(db: DbType): Storage {
   runMigrations(db);
@@ -27,7 +59,13 @@ function sqliteStorage(db: DbType): Storage {
     people: createPersonRepo(db),
     personMemories: createPersonMemoryRepo(db),
     capabilityRequests: createCapabilityRequestRepo(db),
+    ...deviceRepositories(db),
   };
+}
+
+/** True when this storage can back AGI Command. */
+export function isDeviceStorage(storage: Storage): storage is DeviceStorage {
+  return storage.kind === 'sqlite' && storage.db !== null && storage.devices !== undefined;
 }
 
 export async function initStorage(): Promise<Storage> {
@@ -46,8 +84,8 @@ export async function initStorage(): Promise<Storage> {
 }
 
 /** Build a storage instance around an externally-provided db (for tests). */
-export function storageFromDb(db: DbType): Storage {
-  return sqliteStorage(db);
+export function storageFromDb(db: DbType): DeviceStorage {
+  return sqliteStorage(db) as DeviceStorage;
 }
 
 export function resetStorageSingleton(): void {

@@ -23,6 +23,15 @@ import type {
   CapabilityRequestRow,
   CapabilityRequestUpdate,
 } from './repositories/capabilityRequestRepo.js';
+import type { DeviceRepo } from './repositories/deviceRepo.js';
+import type { DeviceCredentialRepo } from './repositories/deviceCredentialRepo.js';
+import type { PairingRepo } from './repositories/pairingRepo.js';
+import type { DeviceGroupRepo } from './repositories/deviceGroupRepo.js';
+import type { CommandRepo } from './repositories/commandRepo.js';
+import type { ExecutionRepo } from './repositories/executionRepo.js';
+import type { ConfirmationRepo } from './repositories/confirmationRepo.js';
+import type { DeviceEventRepo } from './repositories/deviceEventRepo.js';
+import type { WorkflowRepo } from './repositories/workflowRepo.js';
 
 /**
  * SQLite calls are synchronous while Neon calls are asynchronous. Application
@@ -103,6 +112,27 @@ export interface CapabilityRequestRepository {
   listByUser(userId: string): MaybePromise<CapabilityRequestRow[]>;
 }
 
+/**
+ * AGI Command repositories.
+ *
+ * Synchronous and SQLite-backed. Device control needs a long-running gateway
+ * process, so it does not run on the serverless Postgres path, and the Postgres
+ * adapter deliberately does not implement these — shipping half-working
+ * implementations would be a worse lie than saying so plainly.
+ * Narrow with `isDeviceStorage()` from ./index.js.
+ */
+export interface DeviceRepositories {
+  devices: DeviceRepo;
+  deviceCredentials: DeviceCredentialRepo;
+  pairings: PairingRepo;
+  deviceGroups: DeviceGroupRepo;
+  commands: CommandRepo;
+  executions: ExecutionRepo;
+  confirmations: ConfirmationRepo;
+  deviceEvents: DeviceEventRepo;
+  workflows: WorkflowRepo;
+}
+
 export interface Storage {
   kind: 'sqlite' | 'postgres';
   db: SqliteDatabase | null;
@@ -113,4 +143,17 @@ export interface Storage {
   people: PersonRepository;
   personMemories: PersonMemoryRepository;
   capabilityRequests: CapabilityRequestRepository;
+  // Present only on the SQLite backend — see DeviceRepositories.
+  devices?: DeviceRepo;
+  deviceCredentials?: DeviceCredentialRepo;
+  pairings?: PairingRepo;
+  deviceGroups?: DeviceGroupRepo;
+  commands?: CommandRepo;
+  executions?: ExecutionRepo;
+  confirmations?: ConfirmationRepo;
+  deviceEvents?: DeviceEventRepo;
+  workflows?: WorkflowRepo;
 }
+
+/** Storage that can back AGI Command: SQLite, with the device repositories. */
+export type DeviceStorage = Storage & DeviceRepositories & { db: SqliteDatabase };

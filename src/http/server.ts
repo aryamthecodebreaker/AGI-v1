@@ -6,9 +6,9 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { config } from '../config.js';
+import { assertDeviceConfig, config } from '../config.js';
 import { logger } from '../logger.js';
-import { initStorage, type Storage } from '../storage/index.js';
+import { initStorage, type DeviceStorage, type Storage } from '../storage/index.js';
 import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { chatRoutes } from './routes/chat.js';
@@ -16,6 +16,13 @@ import { memoryRoutes } from './routes/memories.js';
 import { peopleRoutes } from './routes/people.js';
 import { capabilityRoutes } from './routes/capabilities.js';
 import { toHttpError } from '../util/errors.js';
+import { createAgiCommand, type AgiCommand } from '../devices/index.js';
+import { agiCommandRoutes } from './routes/agiCommand.js';
+import { deviceRoutes } from './routes/devices.js';
+import { deviceGroupRoutes } from './routes/deviceGroups.js';
+import { deviceCommandRoutes } from './routes/deviceCommands.js';
+import { workflowRoutes } from './routes/workflows.js';
+import { internalGatewayRoutes } from './routes/internalGateway.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,8 +40,30 @@ function resolvePublicDir(): string {
   return candidates[0]!;
 }
 
-export async function buildServer(storageOverride?: Storage): Promise<FastifyInstance> {
-  const storage = storageOverride ?? await initStorage();
+export interface BuildServerOptions {
+  storage?: Storage;
+  /** Injected by tests so they can drive a fake gateway. */
+  agi?: AgiCommand;
+}
+
+export async function buildServer(
+  optionsOrStorage?: BuildServerOptions | Storage,
+): Promise<FastifyInstance> {
+  // Accepts a bare Storage for backwards compatibility with existing callers.
+  const options: BuildServerOptions =
+    optionsOrStorage && 'kind' in optionsOrStorage
+      ? { storage: optionsOrStorage as Storage }
+      : ((optionsOrStorage as BuildServerOptions) ?? {});
+
+  const storage = options.storage ?? (await initStorage());
+
+  // Fail fast on a half-configured device feature rather than at first use.
+  if (!options.agi) assertDeviceConfig();
+  // AGI Command needs the SQLite repositories; on the Postgres path it stays
+  // off and the routes report it as unavailable.
+  const agi =
+    options.agi ??
+    createAgiCommand(storage, { serverSecret: config.jwtSecret });
 
   const app = Fastify({
     logger: config.nodeEnv === 'development'
@@ -66,15 +95,46 @@ export async function buildServer(storageOverride?: Storage): Promise<FastifyIns
     ok: true,
     backend: config.llmBackend,
     storage: storage.kind,
+    agiCommand: agi.enabled,
   }));
+
+  /** Liveness for the command subsystem, including gateway reachability. */
+  app.get('/healthz/agi-command', async () => {
+    if (!agi.enabled) return { ok: true, enabled: false };
+    const health = await agi.gateway.health();
+    return {
+      // The app is healthy even when the gateway is not; device control simply
+      // reports as unavailable.
+      ok: true,
+      enabled: true,
+      gateway: health,
+    };
+  });
 
   // API routes with selective rate limiting
   await authRoutes(app, storage);
   await conversationRoutes(app, storage);
-  await chatRoutes(app, storage);
+  await chatRoutes(app, storage, agi);
   await memoryRoutes(app, storage);
   await peopleRoutes(app, storage);
   await capabilityRoutes(app, storage);
+
+  // AGI Command.
+  //
+  // The cast is sound because every handler in these routers sits behind
+  // `requireFeature`, which returns 503 before any handler body runs whenever
+  // `agi.enabled` is false — and `agi.enabled` is only ever true when the
+  // storage really is a DeviceStorage (see createAgiCommand). Registering them
+  // unconditionally keeps the "feature is off" response a clear 503 rather than
+  // a confusing 404.
+  const deviceStorage = storage as DeviceStorage;
+  await agiCommandRoutes(app, deviceStorage, agi);
+  await deviceRoutes(app, deviceStorage, agi);
+  await deviceGroupRoutes(app, deviceStorage, agi);
+  await deviceCommandRoutes(app, deviceStorage, agi);
+  await workflowRoutes(app, deviceStorage, agi);
+  // Gateway-facing, authenticated by shared secret rather than a user session.
+  await internalGatewayRoutes(app, deviceStorage, agi);
 
   // Unified error handler
   app.setErrorHandler((err, _req, reply) => {
@@ -94,7 +154,22 @@ export async function buildServer(storageOverride?: Storage): Promise<FastifyIns
 }
 
 export async function startServer(): Promise<FastifyInstance> {
-  const app = await buildServer();
+  const storage = await initStorage();
+  assertDeviceConfig();
+  const agi = createAgiCommand(storage, { serverSecret: config.jwtSecret });
+  const app = await buildServer({ storage, agi });
+
+  // Timeouts and expiries are swept in the background, not on request paths, so
+  // a stuck command resolves itself even if nobody is looking at the UI.
+  if (agi.enabled) {
+    const stop = agi.startSweeper();
+    app.addHook('onClose', async () => stop());
+    logger.info(
+      { gateway: agi.settings.gatewayUrl || '(none)' },
+      'AGI Command enabled',
+    );
+  }
+
   await app.listen({ port: config.port, host: config.host });
   logger.info({ url: `http://${config.host}:${config.port}` }, 'AGI-v1 server listening');
   return app;
