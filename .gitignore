@@ -65,3 +65,18 @@ htmlcov/
 ```
 .vercel
 .env*.local
+.vitest-cache/
+
+# Local editor / agent workspace config
+.claude/
+
+# Device agent credentials, if AGI_AGENT_HOME is ever pointed inside the repo.
+# These are live device credentials and must never be committed.
+.agent-creds/
+.agi-command/
+
+# Android agent build output
+agents/android/.gradle/
+agents/android/build/
+agents/android/app/build/
+agents/android/local.properties

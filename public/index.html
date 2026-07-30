@@ -86,6 +86,13 @@
             <button class="nav-item" type="button" data-panel="capabilities">
               <span class="material-symbols-rounded">code</span><span>Capabilities</span>
             </button>
+            <button id="nav-devices" class="nav-item hidden" type="button" data-panel="devices">
+              <span class="material-symbols-rounded">devices</span><span>Devices</span>
+              <span id="nav-devices-count" class="nav-badge"></span>
+            </button>
+            <button id="nav-flows" class="nav-item hidden" type="button" data-panel="flows">
+              <span class="material-symbols-rounded">account_tree</span><span>Flows</span>
+            </button>
           </nav>
         </div>
 
@@ -164,13 +171,34 @@
               <span class="material-symbols-rounded">info</span><span>Context</span>
             </button>
           </div>
+          <!-- AGI Command: live state of the most recent device command. -->
+          <div id="command-strip" class="command-strip hidden" aria-live="polite"></div>
+          <div id="confirmation-area" class="confirmation-area"></div>
+
           <div id="messages" class="messages"></div>
         </section>
 
         <form id="chat-form" class="composer">
           <label class="sr-only" for="chat-input">Message AGI-v1</label>
+          <div id="voice-transcript" class="voice-transcript hidden" aria-live="polite"></div>
           <textarea id="chat-input" placeholder="Ask AGI-v1 anything…" rows="1"></textarea>
           <div class="composer-footer">
+            <!-- AGI Command presence. Decorative: the state is also written out
+                 in #agi-state, and the orb is aria-hidden. -->
+            <div id="agi-presence" class="agi-presence hidden">
+              <canvas id="orb" width="72" height="72" aria-hidden="true"></canvas>
+              <span id="agi-state" class="agi-state" role="status" aria-live="polite">Idle</span>
+              <span id="gateway-badge" class="gateway-badge"></span>
+            </div>
+            <button id="mic-btn" class="icon-button voice-button hidden" type="button"
+                    aria-pressed="false" title="Hold to talk, or click to start and click again to stop">
+              <span class="material-symbols-rounded">mic</span>
+              <span class="sr-only">Talk</span>
+            </button>
+            <button id="stop-btn" class="icon-button voice-button hidden" type="button" title="Stop speaking">
+              <span class="material-symbols-rounded">stop</span>
+              <span class="sr-only">Stop speaking</span>
+            </button>
             <button class="send-button" type="submit" aria-label="Send message">
               <span class="material-symbols-rounded">send</span>
             </button>
