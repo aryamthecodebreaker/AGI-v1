@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Permissions are deliberately minimal, and there are several notable absences:
+
+    * No RECORD_AUDIO, no CAMERA — this agent does not record anything.
+    * No BIND_ACCESSIBILITY_SERVICE — accessibility services are not used as a
+      general remote-control mechanism.
+    * No QUERY_ALL_PACKAGES — app launching resolves a fixed allowlist through
+      <queries> below instead of enumerating everything installed.
+    * No permission that could unlock the device or bypass the keyguard; no such
+      permission exists for a normal app, and this agent does not try.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      Only the allowlisted apps are visible to this agent. Anything not listed
+      here cannot be launched, which is the same boundary Capabilities.kt enforces
+      in code.
+    -->
+    <queries>
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.google.android.calendar" />
+        <package android:name="com.google.android.apps.docs" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.google.android.keep" />
+        <package android:name="com.google.android.deskclock" />
+        <package android:name="com.android.deskclock" />
+        <package android:name="com.android.settings" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="AGI Command"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.DayNight">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="AGI Command">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Not exported: nothing outside this app may start or stop the agent.
+        -->
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

@@ -16,4 +16,16 @@ export const ids = {
   memory: () => newId('mem'),
   person: () => newId('p'),
   session: () => newId('s'),
+  // AGI Command
+  device: () => newId('dev'),
+  credential: () => newId('cred'),
+  pairing: () => newId('pair'),
+  group: () => newId('grp'),
+  command: () => newId('cmd'),
+  execution: () => newId('exec'),
+  confirmation: () => newId('cfm'),
+  event: () => newId('evt'),
+  workflow: () => newId('wf'),
+  workflowStep: () => newId('wfs'),
+  workflowRun: () => newId('wfr'),
 };

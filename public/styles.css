@@ -127,3 +127,176 @@ button.primary:hover { background: var(--accent); }
 .composer button.primary { width: auto; padding: 0 20px; margin: 0; }
 
 .empty-state { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+
+/* ==========================================================================
+   AGI Command
+   ========================================================================== */
+
+/* Visible to screen readers only — every icon button has a text label. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+.device-summary { margin-top: 6px; font-size: 12px; color: var(--muted); }
+
+.panel-actions { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px 12px; }
+.panel-note {
+  margin: 16px 4px 8px; padding: 10px 12px;
+  font-size: 11px; line-height: 1.5; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+}
+
+.ghost-btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  font-family: inherit;
+}
+.ghost-btn:hover { border-color: var(--accent); }
+.ghost-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+button.primary.small { width: auto; margin: 0; padding: 7px 12px; font-size: 12px; }
+
+/* ---------- Command centre header ---------- */
+.centre-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+#orb { width: 56px; height: 56px; flex: none; }
+.centre-status { flex: 1; min-width: 0; }
+.agi-state { font-size: 14px; font-weight: 600; }
+.agi-detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.centre-gateway {
+  font-size: 11px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+}
+/* Tone is reinforced by the text inside, never carried by colour alone. */
+.centre-gateway.tone-ok { color: #4ade80; border-color: #22633f; }
+.centre-gateway.tone-bad { color: var(--danger); border-color: #6b2b2b; }
+.centre-gateway.tone-off { color: var(--muted); }
+.centre-gateway.tone-unavailable { color: var(--muted); }
+
+/* ---------- Devices ---------- */
+.device-card {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+}
+.device-header { display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.status-dot.online { background: #4ade80; }
+.status-dot.offline { background: #4b5262; }
+.device-name { font-size: 13px; font-weight: 600; }
+.device-badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--accent); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px;
+}
+.device-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.device-caps { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.device-caps summary { cursor: pointer; }
+.cap-row { display: block; padding: 3px 0 3px 4px; color: var(--text); font-size: 11px; }
+.device-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+.pairing-box {
+  background: var(--panel-2); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 12px; margin-bottom: 12px;
+}
+.pairing-code {
+  font-size: 24px; font-weight: 700; letter-spacing: 3px;
+  text-align: center; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.pairing-help { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+.pairing-example {
+  display: block; margin-top: 8px; padding: 8px; font-size: 10px;
+  background: var(--bg); border-radius: 6px; color: var(--muted);
+  word-break: break-all; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+/* ---------- Command strip ---------- */
+.command-strip {
+  padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+}
+.command-header { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.execution-list { display: flex; flex-direction: column; gap: 4px; }
+.execution {
+  display: flex; gap: 10px; align-items: baseline;
+  font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--bg);
+  border-left: 3px solid var(--border);
+}
+.execution-device { font-weight: 600; min-width: 110px; }
+.execution-state { color: var(--muted); }
+.execution.tone-ok { border-left-color: #4ade80; }
+.execution.tone-bad { border-left-color: var(--danger); }
+.execution.tone-warn { border-left-color: #fbbf24; }
+.execution.tone-muted { border-left-color: var(--border); }
+.command-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ---------- Confirmations ---------- */
+.confirmation-area { padding: 0 24px; }
+.confirmation-card {
+  margin-top: 12px; padding: 14px 16px;
+  background: var(--panel-2); border: 1px solid #fbbf24; border-radius: 10px;
+}
+.confirmation-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: #fbbf24; }
+.confirmation-summary { font-size: 14px; margin: 8px 0 12px; white-space: pre-wrap; line-height: 1.5; }
+.confirmation-actions { display: flex; gap: 8px; }
+
+/* ---------- Voice ---------- */
+.voice-transcript {
+  margin: 0 24px 8px; padding: 8px 12px;
+  font-size: 13px; color: var(--muted); font-style: italic;
+  background: var(--panel-2); border-radius: 8px;
+}
+.icon-btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  width: 42px; border-radius: 8px; cursor: pointer; font-size: 16px; flex: none;
+}
+.icon-btn:hover:not(:disabled) { border-color: var(--accent); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-btn.active { border-color: #4ade80; background: #16301f; }
+.icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Workflows ---------- */
+.workflow-card {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+}
+.workflow-name { font-size: 13px; font-weight: 600; }
+.workflow-steps-summary { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+.modal {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px;
+}
+.modal-card {
+  width: min(720px, 100%); max-height: 86vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 24px;
+}
+.modal-card h2 { margin: 0 0 16px; font-size: 18px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+.modal-actions .primary { width: auto; margin: 0; }
+.workflow-steps { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.workflow-step-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: 6px; align-items: center; }
+.workflow-step-row select,
+.workflow-step-row input {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 8px; border-radius: 8px; font-size: 12px; font-family: inherit; min-width: 0;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  #chat-view { grid-template-columns: 1fr; }
+  .sidebar { height: auto; max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--border); }
+  .chat { height: auto; min-height: 58vh; }
+  .workflow-step-row { grid-template-columns: 1fr; }
+  .centre-header { flex-wrap: wrap; }
+}
+
+/* Respect the OS motion preference across the whole UI, not just the orb. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

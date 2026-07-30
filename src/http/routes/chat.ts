@@ -9,15 +9,26 @@ import { requireAuth } from '../../auth/middleware.js';
 import { createOrchestrator } from '../../brain/orchestrator.js';
 import { startSse } from '../sse.js';
 import { logger } from '../../logger.js';
+import type { AgiCommand } from '../../devices/index.js';
 
 const chatSchema = z.object({
   conversationId: z.string().min(1),
   content: z.string().min(1).max(8000),
+  /**
+   * The device id of the browser session, when it has been paired. Lets "open
+   * this on this device" resolve. Validated against the caller's own registry
+   * before use — a forged id resolves to nothing.
+   */
+  thisDeviceId: z.string().max(64).optional(),
 });
 
-export async function chatRoutes(app: FastifyInstance, storage: Storage): Promise<void> {
+export async function chatRoutes(
+  app: FastifyInstance,
+  storage: Storage,
+  agi?: AgiCommand,
+): Promise<void> {
   const auth = requireAuth(storage);
-  const orchestrator = createOrchestrator(storage);
+  const orchestrator = createOrchestrator(storage, undefined, agi);
 
   app.post('/api/chat', { preHandler: auth }, async (req, reply) => {
     const body = chatSchema.parse(req.body);
@@ -40,11 +51,18 @@ export async function chatRoutes(app: FastifyInstance, storage: Storage): Promis
     });
 
     try {
+      // Only honour a device id the caller actually owns.
+      const thisDeviceId =
+        body.thisDeviceId && storage.devices.getOwned(user.id, body.thisDeviceId)
+          ? body.thisDeviceId
+          : null;
+
       for await (const event of orchestrator.handleUserMessage({
         userId: user.id,
         conversationId: body.conversationId,
         content: body.content,
         signal: abortController.signal,
+        thisDeviceId,
       })) {
         if (event.type === 'token') sse.send({ token: event.data });
         else if (event.type === 'meta') sse.send({ meta: event.meta });

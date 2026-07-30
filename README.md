@@ -103,13 +103,111 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), register an account, and start chatting.
 
+---
+
+## AGI Command — voice-first device control
+
+AGI-v1 can also act on your devices. You speak or type naturally; AGI-v1 works
+out what you mean, decides what should happen, and coordinates it. Small trusted
+agents on your devices do the actual work and report back.
+
+> **The rule everything follows from:** AGI-v1 never claims a device action
+> succeeded without a real result from that device.
+
+```
+"How many devices are connected?"
+"Open YouTube on all my phones."
+"Not on the laptop. Only on the phones."
+"Mute every device except my main computer."
+"Which device failed?"  "Retry only on that one."
+"Start study mode."
+```
+
+**Off by default.** With `AGI_COMMAND_ENABLED=false` — the default — nothing
+changes: same chat, same memory, and the device panel says device control is
+unavailable.
+
+### What it actually does
+
+- **Deterministic targeting.** The model proposes; the app resolves against the
+  real registry. Ambiguous? It asks one short question instead of guessing.
+- **Concurrent multi-device dispatch,** tracked per device. Three successes, one
+  failure and one offline device is reported as exactly that.
+- **Conversational correction.** "Not on the laptop, on the phones" keeps the
+  action, changes the targets, skips devices that already ran it, and cancels
+  what had not.
+- **Confirmation** for wide fan-out, queued actions and workflow runs — bound to
+  one exact action, single-use, expiring.
+- **Push-to-talk voice,** no wake word, no audio stored.
+- **A command centre** with an animated presence, live per-device status,
+  confirmation cards, device and workflow panels.
+
+### Trying it without hardware
+
+Three terminals, no physical devices:
+
+```bash
+npm run dev
+```
+```bash
+npm run gateway
+```
+```bash
+npm run simulate-device -- --name "Phone One" --type android_phone --code ABCD-EFGH
+npm run simulate-device -- --name "Phone Two" --type android_phone --code IJKL-MNOP
+npm run simulate-device -- --name "Laptop"    --type windows       --code QRST-UVWX
+```
+
+Get codes from **Devices → Pair a device**. The simulator can also fail, refuse,
+hang or disconnect on demand (`--fail`, `--unsupported`, `--hang`, `--delay`), so
+the whole product — including partial failure and retry — is demonstrable on one
+machine.
+
+### What it will not do
+
+No unlocking devices or bypassing PINs and biometrics. No hidden recording. No
+arbitrary shell or script execution. No credential extraction, privilege
+escalation, or disabling security tools. These are refused by a hard denylist,
+not a setting.
+
+The Windows agent also declines to advertise capabilities it cannot perform
+*correctly* — Windows exposes only a play/pause **toggle**, so it does not claim
+`media.play`. A capability that is not advertised is reported honestly as
+unsupported.
+
+### Documentation
+
+| | |
+|---|---|
+| [Architecture](./docs/agi-command-architecture.md) | How it fits together, and who decides what |
+| [Device protocol](./docs/device-protocol.md) | The wire format, normative for non-TS agents |
+| [Pairing](./docs/device-pairing.md) | Codes, credentials, rotation, revocation |
+| [Security model](./docs/security-threat-model.md) | Trust boundaries, threats, what is never allowed |
+| [Gateway deployment](./docs/gateway-deployment.md) | Running the long-running connection service |
+| [Voice](./docs/voice-architecture.md) | Push-to-talk, provider-neutral layer, accessibility |
+| [Workflows](./docs/workflows.md) | Reusable multi-device routines |
+| [Windows agent](./docs/windows-agent.md) · [Android agent](./docs/android-agent.md) | Platform agents and their honest limits |
+| [Troubleshooting](./docs/troubleshooting.md) | When something does not work |
+
+---
+
 ## Tests
 
 ```bash
 npm test
+npm run build
 ```
 
-Vitest covers the storage repositories end to end (users, conversations, messages, memories, people, FTS and vector search).
+Vitest covers the storage repositories (users, conversations, messages, memories,
+people, FTS and vector search) and AGI Command end to end: pairing and its expiry
+and single-use guarantees, credential authentication and revocation, per-user
+isolation, capability validation, target resolution and ambiguity, concurrent
+dispatch, partial success, timeouts, cancellation, retry, duplicate suppression,
+conversational corrections, workflows, and the feature-disabled path.
+
+The gateway suite runs the **real** app, the **real** gateway, real WebSockets
+and real simulated agents. No cloud credentials, no API key and no physical
+devices are required.
 
 ## Roadmap
 
@@ -117,6 +215,7 @@ Vitest covers the storage repositories end to end (users, conversations, message
 - ✅ Multi-user auth + per-user memory
 - ✅ Unified people + fact extraction (1 LLM call per turn)
 - ✅ Gemini backend + local transformers backend
+- ✅ AGI Command: device registry, gateway, capabilities, workflows, voice
 - ⏳ Deployment (GitHub Pages / Hugging Face Space)
 - ⏳ From-scratch transformer (`src/scratch/`) + training loop on accumulated conversations
 - ⏳ Background reflection pass (bot periodically summarizes its own memory)

@@ -27,37 +27,105 @@
       </div>
     </section>
 
-    <!-- Chat view -->
+    <!-- Command centre -->
     <section id="chat-view" class="view hidden">
       <aside class="sidebar">
         <div class="sidebar-header">
           <div class="brand-row">
             <span class="brand">AGI-v1</span>
-            <button id="new-chat" title="New chat">+</button>
+            <button id="new-chat" title="New chat" aria-label="New chat">+</button>
           </div>
           <div id="who" class="who"></div>
+          <div id="device-summary" class="device-summary" aria-live="polite"></div>
         </div>
-        <div class="tab-row">
-          <button class="side-tab active" data-tab="conversations">Chats</button>
-          <button class="side-tab" data-tab="people">People</button>
-          <button class="side-tab" data-tab="memories">Memories</button>
+        <div class="tab-row" role="tablist" aria-label="Panels">
+          <button class="side-tab active" data-tab="conversations" role="tab" aria-selected="true">Chats</button>
+          <button class="side-tab" data-tab="devices" role="tab" aria-selected="false">Devices</button>
+          <button class="side-tab" data-tab="workflows" role="tab" aria-selected="false">Flows</button>
+          <button class="side-tab" data-tab="people" role="tab" aria-selected="false">People</button>
+          <button class="side-tab" data-tab="memories" role="tab" aria-selected="false">Memory</button>
         </div>
-        <div id="side-conversations" class="side-panel"></div>
-        <div id="side-people" class="side-panel hidden"></div>
-        <div id="side-memories" class="side-panel hidden"></div>
+
+        <div id="side-conversations" class="side-panel" role="tabpanel"></div>
+
+        <div id="side-devices" class="side-panel hidden" role="tabpanel">
+          <div class="panel-actions">
+            <button id="pair-device" class="ghost-btn">Pair a device</button>
+            <button id="register-browser" class="ghost-btn">Use this browser as a device</button>
+          </div>
+          <div id="pairing-box" class="pairing-box hidden" aria-live="polite"></div>
+          <div id="device-list"></div>
+          <div class="panel-note">
+            AGI Command cannot unlock a locked device, bypass a PIN or biometrics,
+            record audio or video, or run arbitrary commands. Those are not
+            implemented.
+          </div>
+        </div>
+
+        <div id="side-workflows" class="side-panel hidden" role="tabpanel">
+          <div class="panel-actions">
+            <button id="new-workflow" class="ghost-btn">New workflow</button>
+          </div>
+          <div id="workflow-list"></div>
+        </div>
+
+        <div id="side-people" class="side-panel hidden" role="tabpanel"></div>
+        <div id="side-memories" class="side-panel hidden" role="tabpanel"></div>
+
         <div class="sidebar-footer">
           <button id="logout">Log out</button>
         </div>
       </aside>
+
       <main class="chat">
-        <div id="messages" class="messages"></div>
+        <header class="centre-header">
+          <!-- Decorative: every state the orb shows is also written out in text. -->
+          <canvas id="orb" width="112" height="112" aria-hidden="true"></canvas>
+          <div class="centre-status">
+            <div id="agi-state" class="agi-state" role="status" aria-live="polite">Idle</div>
+            <div id="agi-detail" class="agi-detail"></div>
+          </div>
+          <div class="centre-gateway" id="gateway-badge" title="Device gateway status"></div>
+        </header>
+
+        <div id="command-strip" class="command-strip hidden" aria-live="polite"></div>
+        <div id="confirmation-area" class="confirmation-area"></div>
+
+        <div id="messages" class="messages" role="log" aria-live="polite"></div>
+
+        <div id="voice-transcript" class="voice-transcript hidden" aria-live="polite"></div>
+
         <form id="chat-form" class="composer">
-          <textarea id="chat-input" placeholder="Say something. It will remember." rows="2"></textarea>
+          <button type="button" id="mic-btn" class="icon-btn" aria-pressed="false"
+                  title="Hold to talk, or click to start and click again to stop">
+            <span aria-hidden="true">&#127908;</span><span class="sr-only">Talk</span>
+          </button>
+          <textarea id="chat-input" placeholder="Say something, or tell me what to do with your devices." rows="2"></textarea>
+          <button type="button" id="stop-btn" class="icon-btn hidden" title="Stop speaking">
+            <span aria-hidden="true">&#9632;</span><span class="sr-only">Stop</span>
+          </button>
           <button class="primary" type="submit">Send</button>
         </form>
       </main>
     </section>
+
+    <!-- Workflow editor -->
+    <div id="workflow-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="workflow-modal-title">
+      <div class="modal-card">
+        <h2 id="workflow-modal-title">New workflow</h2>
+        <label>Name<input id="workflow-name" type="text" maxlength="80" /></label>
+        <label>Description (optional)<input id="workflow-description" type="text" maxlength="400" /></label>
+        <div id="workflow-steps" class="workflow-steps"></div>
+        <button type="button" id="add-step" class="ghost-btn">Add step</button>
+        <p id="workflow-error" class="error"></p>
+        <div class="modal-actions">
+          <button type="button" id="workflow-cancel" class="ghost-btn">Cancel</button>
+          <button type="button" id="workflow-save" class="primary">Save workflow</button>
+        </div>
+      </div>
+    </div>
   </div>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>

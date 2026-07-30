@@ -17,6 +17,6 @@
     "allowSyntheticDefaultImports": true,
     "types": ["node"]
   },
-  "include": ["src/**/*", "scripts/**/*", "tests/**/*"],
+  "include": ["src/**/*", "scripts/**/*", "tests/**/*", "agents/**/*.ts"],
   "exclude": ["node_modules", "dist", "data"]
 }

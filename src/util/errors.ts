@@ -1,3 +1,5 @@
+import { ZodError } from 'zod';
+
 export class AppError extends Error {
   readonly status: number;
   readonly code: string;
@@ -28,6 +30,22 @@ export function toHttpError(err: unknown): { status: number; body: Record<string
       body: { error: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) },
     };
   }
+
+  // Routes validate their input with `schema.parse()`, which throws a ZodError.
+  // That is the caller's fault, not ours — report 400 rather than 500.
+  if (err instanceof ZodError) {
+    const first = err.errors[0];
+    const path = first?.path.join('.');
+    return {
+      status: 400,
+      body: {
+        error: 'BAD_REQUEST',
+        message: `${path ? `${path}: ` : ''}${first?.message ?? 'invalid request body'}`,
+        details: err.errors.map((e) => ({ path: e.path.join('.'), message: e.message })),
+      },
+    };
+  }
+
   const msg = err instanceof Error ? err.message : 'Unknown error';
   return { status: 500, body: { error: 'INTERNAL', message: msg } };
 }

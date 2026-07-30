@@ -1,0 +1,192 @@
+// Provider-neutral voice layer.
+//
+// The interface below is what the rest of the UI talks to. Today it is backed by
+// the browser's Web Speech API, which needs no key and no server round trip.
+// Swapping in a hosted STT/TTS provider — or a future realtime multimodal voice
+// API — means writing another object with the same shape and choosing it here;
+// nothing in the command centre changes.
+//
+// Deliberate constraints:
+//   * Push-to-talk only. There is no always-listening mode, hidden or otherwise.
+//   * Nothing is recorded or uploaded: recognition happens in the browser and
+//     only the resulting text leaves the page.
+//   * If the microphone is unavailable or permission is refused, the UI says so
+//     and text input keeps working — voice is never the only way in.
+
+/**
+ * @typedef {Object} VoiceBackend
+ * @property {boolean} sttAvailable
+ * @property {boolean} ttsAvailable
+ * @property {() => Promise<void>} startListening
+ * @property {() => void} stopListening
+ * @property {(text: string) => void} speak
+ * @property {() => void} stopSpeaking
+ */
+
+function createBrowserBackend({ onTranscript, onInterim, onState, onError }) {
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  const synth = window.speechSynthesis ?? null;
+
+  let recognition = null;
+  let listening = false;
+
+  function buildRecognition() {
+    const instance = new SpeechRecognition();
+    instance.lang = navigator.language || 'en-US';
+    // Push-to-talk: one utterance per press, no continuous capture.
+    instance.continuous = false;
+    instance.interimResults = true;
+    instance.maxAlternatives = 1;
+
+    instance.onresult = (event) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) final += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      if (interim) onInterim?.(interim);
+      if (final) {
+        onState?.('transcribing');
+        onTranscript?.(final.trim());
+      }
+    };
+
+    instance.onerror = (event) => {
+      listening = false;
+      const message =
+        event.error === 'not-allowed' || event.error === 'service-not-allowed'
+          ? 'Microphone permission was refused. You can still type.'
+          : event.error === 'no-speech'
+            ? 'I did not hear anything.'
+            : event.error === 'audio-capture'
+              ? 'No microphone was found. You can still type.'
+              : `Speech recognition failed (${event.error}). You can still type.`;
+      onError?.(message);
+      onState?.('idle');
+    };
+
+    instance.onend = () => {
+      listening = false;
+      onState?.('idle');
+    };
+
+    return instance;
+  }
+
+  return {
+    sttAvailable: Boolean(SpeechRecognition),
+    ttsAvailable: Boolean(synth),
+
+    async startListening() {
+      if (!SpeechRecognition) {
+        onError?.('This browser has no speech recognition. You can still type.');
+        return;
+      }
+      if (listening) return;
+      // A fresh instance per press: reusing one across errors is unreliable
+      // across browsers.
+      recognition = buildRecognition();
+      try {
+        recognition.start();
+        listening = true;
+        onState?.('listening');
+      } catch (err) {
+        listening = false;
+        onError?.(`Could not start the microphone: ${err.message}`);
+        onState?.('idle');
+      }
+    },
+
+    stopListening() {
+      if (!recognition || !listening) return;
+      try {
+        recognition.stop();
+      } catch {
+        /* already stopping */
+      }
+      listening = false;
+    },
+
+    speak(text) {
+      if (!synth || !text) return;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = navigator.language || 'en-US';
+      utterance.rate = 1.02;
+      utterance.onstart = () => onState?.('speaking');
+      utterance.onend = () => onState?.('idle');
+      utterance.onerror = () => onState?.('idle');
+      synth.speak(utterance);
+    },
+
+    stopSpeaking() {
+      synth?.cancel();
+    },
+  };
+}
+
+/**
+ * Placeholder for a hosted provider. It reports itself unavailable rather than
+ * pretending, so selecting a backend the server has not implemented degrades to
+ * text instead of silently doing nothing.
+ */
+function createHostedBackend(name, { onError }) {
+  const unavailable = () => {
+    onError?.(
+      `The "${name}" voice backend is configured but not implemented in this build. Type instead.`,
+    );
+  };
+  return {
+    sttAvailable: false,
+    ttsAvailable: false,
+    async startListening() {
+      unavailable();
+    },
+    stopListening() {},
+    speak() {},
+    stopSpeaking() {},
+  };
+}
+
+/**
+ * @param {{backend?: string, onTranscript?: Function, onInterim?: Function,
+ *          onState?: Function, onError?: Function}} options
+ */
+export function createVoice(options = {}) {
+  const backendName = options.backend ?? 'browser';
+  const backend =
+    backendName === 'browser'
+      ? createBrowserBackend(options)
+      : backendName === 'none'
+        ? createHostedBackend('none', options)
+        : createHostedBackend(backendName, options);
+
+  let speakingEnabled = backend.ttsAvailable;
+
+  return {
+    backendName,
+    get sttAvailable() {
+      return backend.sttAvailable;
+    },
+    get ttsAvailable() {
+      return backend.ttsAvailable;
+    },
+    get speakingEnabled() {
+      return speakingEnabled;
+    },
+    setSpeakingEnabled(value) {
+      speakingEnabled = value && backend.ttsAvailable;
+      if (!speakingEnabled) backend.stopSpeaking();
+    },
+    startListening: () => backend.startListening(),
+    stopListening: () => backend.stopListening(),
+    /** Only speaks when spoken responses are switched on. */
+    speak(text) {
+      if (speakingEnabled) backend.speak(text);
+    },
+    stopSpeaking: () => backend.stopSpeaking(),
+  };
+}
