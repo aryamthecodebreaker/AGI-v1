@@ -1,15 +1,31 @@
 // Provider-neutral voice layer.
 //
 // The interface below is what the rest of the UI talks to. Today it is backed by
-// the browser's Web Speech API, which needs no key and no server round trip.
-// Swapping in a hosted STT/TTS provider — or a future realtime multimodal voice
-// API — means writing another object with the same shape and choosing it here;
-// nothing in the command centre changes.
+// the browser's Web Speech API. Swapping in a hosted STT/TTS provider — or a
+// future realtime multimodal voice API — means writing another object with the
+// same shape and choosing it here; nothing in the command centre changes.
+//
+// WHERE YOUR AUDIO GOES — read this before assuming "no API key" means "local".
+//
+//   The Web Speech API needs no API key, but that is because the browser vendor
+//   absorbs the cost, NOT because recognition is on-device:
+//
+//     * Chrome / Edge — audio is streamed to Google's speech servers and text
+//       comes back. It leaves the machine.
+//     * Safari — audio goes to Apple, unless the OS has on-device dictation
+//       installed for the language, in which case it may stay local.
+//     * Firefox — SpeechRecognition is not implemented; voice is unavailable and
+//       the microphone button is disabled.
+//
+//   AGI-v1 itself never receives, stores or forwards audio: only the recognised
+//   text is sent to /api/chat, exactly as if it had been typed. But this layer
+//   cannot promise the audio never left the device, because in the common case
+//   it did. If that matters, set VOICE_BACKEND=none and type.
 //
 // Deliberate constraints:
 //   * Push-to-talk only. There is no always-listening mode, hidden or otherwise.
-//   * Nothing is recorded or uploaded: recognition happens in the browser and
-//     only the resulting text leaves the page.
+//   * Nothing is recorded or persisted by AGI-v1 — no audio is written to disk
+//     or sent to the server at any point.
 //   * If the microphone is unavailable or permission is refused, the UI says so
 //     and text input keeps working — voice is never the only way in.
 

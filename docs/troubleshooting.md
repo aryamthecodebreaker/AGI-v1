@@ -159,6 +159,40 @@ has revoked you is a battery drain.
 
 ---
 
+## CI fails with "npm ci can only install packages when your package.json and package-lock.json are in sync"
+
+Somebody regenerated `package-lock.json` on Windows. npm drops optional
+dependencies that cannot be installed on the current platform — `@emnapi/core`
+and `@emnapi/runtime`, which the Linux runner needs — and rewrites the lockfile
+without them.
+
+Do not "fix" it by running `npm install` again on Windows; that reproduces it.
+Restore the lockfile and regenerate it somewhere Linux-shaped:
+
+```bash
+git checkout origin/main -- package-lock.json
+```
+
+To add a dependency from Windows, either run the install inside WSL or Docker, or
+restore `origin/main`'s lockfile and splice in only the new entries.
+
+---
+
+## The deployed app shows no sign of AGI Command
+
+Expected on the Vercel deployment. Three separate things all have to be true, and
+none of them hold there by default:
+
+1. `AGI_COMMAND_ENABLED=true` — defaults to false.
+2. A reachable long-running gateway. Vercel functions cannot hold a WebSocket
+   open, so the gateway has to run somewhere else.
+3. The SQLite storage backend. With `DATABASE_URL` set the app uses Postgres,
+   where the device repositories deliberately do not exist.
+
+`GET /api/agi-command/status` tells you which one is missing.
+
+---
+
 ## Tests fail locally
 
 The suite needs no cloud credentials, no API key and no physical devices. If
