@@ -16,6 +16,7 @@ const state = {
   capabilities: [],
   latestSources: [],
   activePanel: 'chats',
+  callMode: false,
   sending: false,
 };
 
@@ -694,7 +695,9 @@ $('#chat-form').addEventListener('submit', async (event) => {
     if (!assistantText.trim()) throw new Error('The model returned no text. Please try again.');
     renderMessageContent(assistant, assistantText);
     assistant.classList.remove('thinking');
-    voice?.speak(assistantText);
+    // In call mode, listening resumes only once the reply has finished playing,
+    // otherwise the microphone picks up the assistant and answers itself.
+    voice?.speak(assistantText, continueCall);
     // A device turn sets its own state from real command results.
     if (!sawDeviceTurn) setAgiState('idle');
     state.latestSources = collectSources(assistantText);
@@ -712,6 +715,8 @@ $('#chat-form').addEventListener('submit', async (event) => {
     }
     showToast('The reply failed. Your message is still saved, so you can retry.');
     setAgiState('error', error.message);
+    // Do not keep a call looping against a failing turn.
+    endCall();
   } finally {
     state.sending = false;
     $('.send-button').disabled = false;
@@ -729,6 +734,8 @@ $('#chat-form').addEventListener('submit', async (event) => {
 let orb = null;
 let voice = null;
 let commandCentre = null;
+let micControls = null;
+let callResumeTimer = null;
 
 const AGI_STATE_LABELS = {
   idle: 'Idle',
@@ -766,41 +773,56 @@ function handleDeviceMeta(meta) {
   return true;
 }
 
+/**
+ * Voice is a chat feature, not a device feature. It is set up whenever the
+ * browser supports it, regardless of whether AGI Command is enabled — gating it
+ * behind device control meant the microphone never appeared on deployments with
+ * the feature switched off.
+ */
+function initVoice(backendName = 'browser') {
+  if (voice) return;
+
+  voice = createVoice({
+    backend: backendName,
+    onTranscript: (text) => {
+      $('#chat-input').value = text;
+      hideInterim();
+      // Send straight away: holding a button and then pressing send is worse
+      // than just acting on what was said.
+      $('#chat-form').requestSubmit();
+    },
+    onInterim: showInterim,
+    onState: (voiceState) => {
+      if (voiceState === 'listening') setAgiState('listening');
+      else if (voiceState === 'transcribing') setAgiState('transcribing');
+      else if (voiceState === 'speaking') setAgiState('speaking');
+      else if (!state.sending) setAgiState('idle');
+    },
+    onError: (message) => {
+      hideInterim();
+      setAgiState('idle');
+      // A refused microphone in call mode must not leave it looping.
+      endCall();
+      showToast(message);
+    },
+  });
+
+  if (!orb) orb = createOrb($('#orb'));
+  // Show the presence when there is any voice to reflect, even with devices off.
+  if (voice.sttAvailable || voice.ttsAvailable) {
+    $('#agi-presence')?.classList.remove('hidden');
+  }
+  setAgiState('idle');
+  setupMic();
+}
+
 async function initAgiCommand() {
   if (!commandCentre) {
     commandCentre = createCommandCentre({ api, orb: null, setState: setAgiState, showToast });
   }
   const status = await commandCentre.init();
-  if (!status?.enabled) return;
-
-  if (!orb) orb = createOrb($('#orb'));
-  setAgiState('idle');
-
-  if (!voice) {
-    voice = createVoice({
-      backend: status.voice?.backend ?? 'browser',
-      onTranscript: (text) => {
-        $('#chat-input').value = text;
-        hideInterim();
-        // Send straight away: holding a button and then pressing send is worse
-        // than just acting on what was said.
-        $('#chat-form').requestSubmit();
-      },
-      onInterim: showInterim,
-      onState: (voiceState) => {
-        if (voiceState === 'listening') setAgiState('listening');
-        else if (voiceState === 'transcribing') setAgiState('transcribing');
-        else if (voiceState === 'speaking') setAgiState('speaking');
-        else if (!state.sending) setAgiState('idle');
-      },
-      onError: (message) => {
-        hideInterim();
-        setAgiState('idle');
-        showToast(message);
-      },
-    });
-    setupMic();
-  }
+  // Voice is set up either way; the status call only supplies the backend name.
+  initVoice(status?.voice?.backend ?? 'browser');
 }
 
 function showInterim(text) {
@@ -820,13 +842,18 @@ function hideInterim() {
 function setupMic() {
   const mic = $('#mic-btn');
   const stop = $('#stop-btn');
-  if (!mic || !stop) return;
+  const call = $('#call-btn');
+  if (!mic || !stop || !call) return;
 
   mic.classList.remove('hidden');
   if (!voice.sttAvailable) {
     mic.disabled = true;
-    mic.title = 'Speech recognition is not available in this browser — type instead.';
+    mic.title =
+      'Speech recognition is not available in this browser. Chrome or Edge support it; Firefox does not. You can still type.';
+    call.disabled = true;
+    call.title = mic.title;
   }
+  if (voice.sttAvailable) call.classList.remove('hidden');
   if (voice.ttsAvailable) stop.classList.remove('hidden');
 
   let listening = false;
@@ -844,6 +871,14 @@ function setupMic() {
     mic.classList.remove('active');
     voice.stopListening();
   };
+
+  // Exposed so the call loop can drive the same primitives the button does.
+  micControls = { begin, end };
+
+  call.addEventListener('click', () => {
+    if (state.callMode) endCall();
+    else startCall();
+  });
 
   // Press and hold with a pointer…
   mic.addEventListener('pointerdown', begin);
@@ -867,8 +902,56 @@ function setupMic() {
   stop.addEventListener('click', () => {
     voice.stopSpeaking();
     end();
+    // Stop means stop: it ends the call too, not just the current sentence.
+    endCall();
     setAgiState('idle');
   });
+}
+
+// ---------------------------------------------------------------------------
+// Call mode — hands-free conversation.
+//
+// Explicitly started by pressing Call and visibly active the whole time. This
+// is not a wake word and not always-listening: nothing records until you press
+// the button, and pressing it again (or Stop) ends it.
+//
+// The loop is listen -> send -> speak -> listen. It waits for playback to
+// finish before listening again, otherwise the microphone hears the reply and
+// talks to itself.
+// ---------------------------------------------------------------------------
+
+function startCall() {
+  if (!voice?.sttAvailable) {
+    showToast('This browser cannot do speech recognition. Chrome or Edge can.');
+    return;
+  }
+  state.callMode = true;
+  const call = $('#call-btn');
+  call?.classList.add('active');
+  call?.setAttribute('aria-pressed', 'true');
+  if (call) call.title = 'End the voice conversation';
+  showToast('Voice call started. Speak when you see "Listening". Press Call again to end.');
+  micControls?.begin();
+}
+
+function endCall() {
+  if (!state.callMode) return;
+  state.callMode = false;
+  const call = $('#call-btn');
+  call?.classList.remove('active');
+  call?.setAttribute('aria-pressed', 'false');
+  if (call) call.title = 'Start a hands-free voice conversation';
+  micControls?.end();
+  clearTimeout(callResumeTimer);
+}
+
+/** Called once a reply has finished being spoken. */
+function continueCall() {
+  if (!state.callMode) return;
+  // A short pause so the tail of the reply is not captured as user speech.
+  callResumeTimer = setTimeout(() => {
+    if (state.callMode) micControls?.begin();
+  }, 400);
 }
 
 syncAuthMode();

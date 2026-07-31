@@ -8,8 +8,18 @@ also type — and vice versa.
 
 ## Design constraints
 
-- **Push-to-talk only.** There is no always-listening mode, hidden or otherwise.
-  You hold the microphone button, or click it once to start and again to stop.
+- **Voice is a chat feature, not a device feature.** The microphone appears
+  whenever the browser supports speech, regardless of whether AGI Command is
+  enabled. (It was briefly gated behind device control, which meant it never
+  appeared on deployments with the feature switched off.)
+- **Nothing listens until you press a button.** There is no wake word and no
+  hidden always-listening mode. Two explicit ways in:
+  - **Push to talk** — hold the microphone, or click once to start and again to
+    stop. One utterance per press.
+  - **Call mode** — press *Call* for a hands-free conversation: listen → send →
+    speak → listen. It is visibly active the entire time (the button pulses),
+    and pressing *Call* again, or *Stop*, ends it. It also ends itself if the
+    microphone is refused or a turn fails, so it can never quietly loop.
 - **AGI-v1 never receives or stores audio.** Only recognised text reaches
   `/api/chat`, exactly as if it had been typed. No audio is written to disk or
   sent to the server at any point.
@@ -164,8 +174,8 @@ click.
 
 ## What is not implemented
 
-- No wake word, and none planned. Always-listening is the behaviour this design
-  specifically avoids.
+- No wake word, and none planned. Call mode is hands-free but explicitly
+  started and visibly active; a wake word would be neither.
 - No speaker identification or voice biometrics.
 - No server-side audio storage. AGI-v1 never receives audio, so there is nothing
   to store — but this is not the same as the audio never leaving your device.

@@ -220,9 +220,23 @@ unavailable.
   what had not.
 - **Confirmation** for wide fan-out, queued actions and workflow runs — bound to
   one exact action, single-use, expiring.
-- **Push-to-talk voice,** no wake word, no audio stored.
+- **Voice, two ways:** push-to-talk, or a hands-free **call mode** that listens,
+  answers, speaks and listens again until you end it. No wake word, and AGI-v1
+  never receives or stores audio. Voice works in ordinary chat — it does not
+  need device control switched on.
 - **A command centre** with an animated presence, live per-device status,
   confirmation cards, device and workflow panels.
+
+### Talking to it
+
+Press the **microphone** to speak one message, or **Call** for a hands-free
+conversation — it listens, answers aloud, then listens again until you press
+Call or Stop.
+
+Needs Chrome or Edge (Firefox has no `SpeechRecognition`) and a secure context,
+so `https://` or `localhost`. No API key: the browser does the recognition. That
+also means the audio goes to the browser vendor, not to AGI-v1 — see
+[voice architecture](./docs/voice-architecture.md).
 
 ### Trying it without hardware
 
@@ -274,6 +288,23 @@ unsupported.
 | [Troubleshooting](./docs/troubleshooting.md) | When something does not work |
 
 ---
+
+### Running it anywhere
+
+Every push to `main` publishes a container image, so a full deployment — chat,
+memory, capabilities and AGI Command with the gateway in-process — is one
+command:
+
+```bash
+docker run -p 7860:7860 \
+  -e GEMINI_API_KEY=your-key \
+  -e JWT_SECRET=at-least-32-characters-long-secret \
+  ghcr.io/aryamthecodebreaker/agi-v1:main
+```
+
+Then open <http://localhost:7860>. Device agents connect to
+`ws://localhost:7860/agent`. The same image runs unchanged on Fly, Railway, a
+VPS or Hugging Face Spaces.
 
 ## Tests
 
