@@ -63,7 +63,7 @@ async function main(): Promise<void> {
         '  --type <type>            android_phone | android_tablet | windows | browser | generic | simulated',
         '  --code <code>            pairing code; only needed the first time',
         '  --app <url>              AGI-v1 base URL (default http://127.0.0.1:3000)',
-        '  --gateway <url>          gateway WS URL (default ws://127.0.0.1:3100/agent)',
+        '  --gateway <url>          gateway WS URL (default ws://127.0.0.1:3000/agent, the app port)',
         '  --capabilities <a,b,c>   advertise only these capabilities',
         '  --fail <a,b>             report failure for these',
         '  --unsupported <a,b>      report "not supported" for these',
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
 
   const appUrl = typeof args.app === 'string' ? args.app : 'http://127.0.0.1:3000';
   const gatewayUrl =
-    typeof args.gateway === 'string' ? args.gateway : 'ws://127.0.0.1:3100/agent';
+    typeof args.gateway === 'string' ? args.gateway : 'ws://127.0.0.1:3000/agent';
   const deviceType = (typeof args.type === 'string' ? args.type : 'simulated') as
     | 'android_phone'
     | 'android_tablet'

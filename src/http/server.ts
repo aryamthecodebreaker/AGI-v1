@@ -6,9 +6,9 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { assertDeviceConfig, config } from '../config.js';
+import { assertDeviceConfig, config, usesEmbeddedGateway } from '../config.js';
 import { logger } from '../logger.js';
-import { initStorage, type DeviceStorage, type Storage } from '../storage/index.js';
+import { initStorage, isDeviceStorage, type DeviceStorage, type Storage } from '../storage/index.js';
 import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { chatRoutes } from './routes/chat.js';
@@ -23,6 +23,7 @@ import { deviceGroupRoutes } from './routes/deviceGroups.js';
 import { deviceCommandRoutes } from './routes/deviceCommands.js';
 import { workflowRoutes } from './routes/workflows.js';
 import { internalGatewayRoutes } from './routes/internalGateway.js';
+import { attachEmbeddedGateway, type EmbeddedGateway } from '../gateway/embedded.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,8 +157,50 @@ export async function buildServer(
 export async function startServer(): Promise<FastifyInstance> {
   const storage = await initStorage();
   assertDeviceConfig();
-  const agi = createAgiCommand(storage, { serverSecret: config.jwtSecret });
+
+  // Embedded mode needs the gateway client to point at a hub that does not
+  // exist until the server does, so build the subsystem first and hand it the
+  // client afterwards. `embeddedClient` is a thin indirection that the hub
+  // fills in once it is attached.
+  const embedded = usesEmbeddedGateway() && isDeviceStorage(storage);
+  let embeddedGateway: EmbeddedGateway | null = null;
+  const agi = createAgiCommand(storage, {
+    serverSecret: config.jwtSecret,
+    gateway: embedded
+      ? {
+          configured: () => true,
+          dispatch: (deviceId, envelope) =>
+            embeddedGateway
+              ? embeddedGateway.client.dispatch(deviceId, envelope)
+              : Promise.resolve({ delivered: false, reason: 'gateway is still starting' }),
+          cancel: (deviceId, commandId, executionId) =>
+            embeddedGateway
+              ? embeddedGateway.client.cancel(deviceId, commandId, executionId)
+              : Promise.resolve({ delivered: false, reason: 'gateway is still starting' }),
+          health: () =>
+            embeddedGateway
+              ? embeddedGateway.client.health()
+              : Promise.resolve({ ok: false, error: 'gateway is still starting' }),
+          connectedDeviceIds: () =>
+            embeddedGateway ? embeddedGateway.client.connectedDeviceIds() : Promise.resolve([]),
+        }
+      : undefined,
+  });
+
   const app = await buildServer({ storage, agi });
+
+  if (agi.enabled && embedded && isDeviceStorage(storage)) {
+    embeddedGateway = attachEmbeddedGateway({
+      app,
+      storage,
+      devices: agi.devices,
+      commands: agi.commands,
+      settings: agi.settings,
+    });
+    app.addHook('onClose', async () => {
+      await embeddedGateway?.close();
+    });
+  }
 
   // Timeouts and expiries are swept in the background, not on request paths, so
   // a stuck command resolves itself even if nobody is looking at the UI.
@@ -165,7 +208,10 @@ export async function startServer(): Promise<FastifyInstance> {
     const stop = agi.startSweeper();
     app.addHook('onClose', async () => stop());
     logger.info(
-      { gateway: agi.settings.gatewayUrl || '(none)' },
+      {
+        mode: embedded ? 'embedded' : 'standalone',
+        gateway: agi.settings.gatewayUrl || '(in-process)',
+      },
       'AGI Command enabled',
     );
   }

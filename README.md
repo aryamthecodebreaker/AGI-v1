@@ -226,19 +226,21 @@ unavailable.
 
 ### Trying it without hardware
 
-Three terminals, no physical devices:
+Set `AGI_COMMAND_ENABLED=true` in `.env`, then two terminals — no gateway process
+and no physical devices:
 
 ```bash
 npm run dev
 ```
 ```bash
-npm run gateway
+npm run simulate-device -- --name "Phone One" --type android_phone --gateway ws://127.0.0.1:3000/agent --code ABCD-EFGH
+npm run simulate-device -- --name "Phone Two" --type android_phone --gateway ws://127.0.0.1:3000/agent --code IJKL-MNOP
+npm run simulate-device -- --name "Laptop"    --type windows       --gateway ws://127.0.0.1:3000/agent --code QRST-UVWX
 ```
-```bash
-npm run simulate-device -- --name "Phone One" --type android_phone --code ABCD-EFGH
-npm run simulate-device -- --name "Phone Two" --type android_phone --code IJKL-MNOP
-npm run simulate-device -- --name "Laptop"    --type windows       --code QRST-UVWX
-```
+
+The gateway runs inside the app by default, on the app's own port. A separate
+`npm run gateway` process is only needed when the web tier is serverless — see
+[gateway deployment](./docs/gateway-deployment.md).
 
 Get codes from **Devices → Pair a device**. The simulator can also fail, refuse,
 hang or disconnect on demand (`--fail`, `--unsupported`, `--hang`, `--delay`), so
@@ -311,7 +313,7 @@ The integration tests create temporary data and remove it after the run. `.env.l
 - Capability PRs still require human review and protected-branch checks.
 - Automatic source self-improvements are bounded patch proposals, not an autonomous merge or deployment loop.
 - `LLM_BACKEND=scratch` is a placeholder; a scratch backend is not implemented.
-- AGI Command needs a separate long-running gateway process for device connections and the SQLite backend, so it does **not** run on the Vercel + Postgres deployment. It is off by default and reports itself unavailable there.
+- AGI Command needs a long-running process and the SQLite backend, so it does **not** run on the Vercel + Postgres deployment; the app reports it unavailable there. It runs anywhere that hosts one long-lived container (Docker, Fly, Railway, Hugging Face Spaces), where the gateway runs in-process.
 - The Android agent is compiled in CI but has never been run on a real device; see [docs/android-agent.md](./docs/android-agent.md).
 - Do not regenerate `package-lock.json` on Windows. npm prunes optional dependencies that are not installable there (`@emnapi/*`), and CI's `npm ci` then rejects the tree as out of sync. Regenerate on Linux, in WSL, or in Docker.
 - The Windows agent deliberately does not advertise `media.play`/`media.pause` or volume control, because Windows exposes only toggles it cannot read back.

@@ -159,18 +159,35 @@ export const deviceSettings: DeviceSettings = {
  * secret between the app and the gateway. Only enforced when the feature is
  * actually switched on, so the default config path stays frictionless.
  */
+/**
+ * True when the gateway should run inside this process rather than as a
+ * separate service. That is the right default anywhere the app is a
+ * long-running process, and it needs no secret because there is no network hop
+ * between the app and the hub.
+ *
+ * An explicit DEVICE_GATEWAY_URL opts into the standalone gateway, which is what
+ * a serverless web tier needs.
+ */
+export function usesEmbeddedGateway(s: DeviceSettings = deviceSettings): boolean {
+  return s.enabled && !s.gatewayUrl;
+}
+
 export function assertDeviceConfig(s: DeviceSettings = deviceSettings): void {
   if (!s.enabled) return;
-  const missing: string[] = [];
-  if (!s.gatewayInternalSecret) missing.push('DEVICE_GATEWAY_INTERNAL_SECRET');
-  if (!s.gatewayUrl) missing.push('DEVICE_GATEWAY_URL');
-  if (missing.length > 0) {
+
+  // Embedded mode: nothing to configure. The hub lives in this process, so
+  // there is no channel to authenticate.
+  if (usesEmbeddedGateway(s)) return;
+
+  // Standalone mode: the app talks to another process, so the shared secret is
+  // mandatory. Running a device control plane with no secret is worse than
+  // running none at all.
+  if (!s.gatewayInternalSecret) {
     throw new Error(
-      `AGI_COMMAND_ENABLED=true but ${missing.join(' and ')} ${
-        missing.length > 1 ? 'are' : 'is'
-      } not set.\n` +
-        `Set them in .env (see .env.example). Generate a secret with:\n` +
-        `  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`,
+      'DEVICE_GATEWAY_URL is set (standalone gateway) but DEVICE_GATEWAY_INTERNAL_SECRET is not.\n' +
+        'Set it in .env (see .env.example), or unset DEVICE_GATEWAY_URL to run the gateway\n' +
+        'inside this process. Generate a secret with:\n' +
+        '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
     );
   }
   if (s.gatewayInternalSecret.length < 32) {
