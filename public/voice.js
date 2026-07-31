@@ -126,16 +126,35 @@ function createBrowserBackend({ onTranscript, onInterim, onState, onError }) {
       listening = false;
     },
 
-    speak(text) {
-      if (!synth || !text) return;
+    speak(text, onDone) {
+      if (!synth || !text) {
+        onDone?.();
+        return;
+      }
       synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = navigator.language || 'en-US';
-      utterance.rate = 1.02;
-      utterance.onstart = () => onState?.('speaking');
-      utterance.onend = () => onState?.('idle');
-      utterance.onerror = () => onState?.('idle');
-      synth.speak(utterance);
+      // Long replies are chunked by sentence: some browsers silently truncate a
+      // single very long utterance, and chunking also lets a barge-in stop
+      // sooner.
+      const chunks = text.match(/[^.!?]+[.!?]*\s*/g)?.filter((s) => s.trim()) ?? [text];
+      let index = 0;
+      const speakNext = () => {
+        if (index >= chunks.length) {
+          onState?.('idle');
+          onDone?.();
+          return;
+        }
+        const utterance = new SpeechSynthesisUtterance(chunks[index++]);
+        utterance.lang = navigator.language || 'en-US';
+        utterance.rate = 1.02;
+        if (index === 1) utterance.onstart = () => onState?.('speaking');
+        utterance.onend = speakNext;
+        utterance.onerror = () => {
+          onState?.('idle');
+          onDone?.();
+        };
+        synth.speak(utterance);
+      };
+      speakNext();
     },
 
     stopSpeaking() {
@@ -199,9 +218,14 @@ export function createVoice(options = {}) {
     },
     startListening: () => backend.startListening(),
     stopListening: () => backend.stopListening(),
-    /** Only speaks when spoken responses are switched on. */
-    speak(text) {
-      if (speakingEnabled) backend.speak(text);
+    /**
+     * Only speaks when spoken responses are switched on. `onDone` fires once
+     * playback finishes (or immediately if speech is off), which is what lets
+     * call mode know when it is safe to listen again without hearing itself.
+     */
+    speak(text, onDone) {
+      if (speakingEnabled) backend.speak(text, onDone);
+      else onDone?.();
     },
     stopSpeaking: () => backend.stopSpeaking(),
   };
