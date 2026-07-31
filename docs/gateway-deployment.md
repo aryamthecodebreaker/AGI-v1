@@ -1,11 +1,35 @@
 # Gateway deployment
 
-The device gateway is a small long-running process that owns the WebSocket
-connections to your device agents. It exists because persistent connections need
-a process that stays alive, and a serverless request handler does not.
+The device gateway owns the WebSocket connections to your device agents. It can
+run two ways, and the same connection code (`src/gateway/hub.ts`) backs both.
+
+## Embedded — the default
+
+If `DEVICE_GATEWAY_URL` is empty, the gateway runs **inside the app process**, on
+the app's own port. Agents connect to `wss://<your-app>/agent`.
 
 ```
-AGI-v1 web application  (serverless or long-running)
+AGI-v1 (one long-running process)
+  ├── HTTP + SSE for browsers
+  └── /agent  WebSocket for device agents
+            │
+            ▼
+    Connected device agents
+```
+
+This is right for anything that runs one long-lived container — Docker, Fly,
+Railway, Hugging Face Spaces — and for local development. There is no second
+process, no extra port, and **no shared secret to configure**, because there is
+no network hop between the app and the hub.
+
+## Standalone — for a serverless web tier
+
+If `DEVICE_GATEWAY_URL` is set, the app talks to a separate gateway process over
+an authenticated internal HTTP API. This is what you need when the web tier
+cannot hold a socket open, as on Vercel.
+
+```
+AGI-v1 web application  (serverless)
             │  authenticated internal HTTP, both directions
             ▼
 Device gateway          (must be long-running)
@@ -14,14 +38,35 @@ Device gateway          (must be long-running)
 Connected device agents
 ```
 
-The gateway holds **no database**. It authenticates a device by asking the app,
-relays validated frames, and reports what it saw.
+The gateway holds **no database** in either mode. It authenticates a device by
+asking the app, relays validated frames, and reports what it saw.
 
 ---
 
 ## Local development
 
-Two terminals.
+One terminal:
+
+```bash
+npm run dev
+```
+
+`.env` needs only:
+
+```dotenv
+AGI_COMMAND_ENABLED=true
+```
+
+Then start some devices — note the gateway is on the app's port:
+
+```bash
+npm run simulate-device -- --name "Phone One" --type android_phone \
+  --gateway ws://127.0.0.1:3000/agent --code ABCD-EFGH
+```
+
+### Running the standalone gateway locally instead
+
+Two terminals, and a shared secret:
 
 ```bash
 npm run dev
@@ -31,8 +76,6 @@ npm run dev
 npm run gateway
 ```
 
-`.env` needs:
-
 ```dotenv
 AGI_COMMAND_ENABLED=true
 DEVICE_GATEWAY_URL=http://127.0.0.1:3100
@@ -41,21 +84,13 @@ DEVICE_GATEWAY_PORT=3100
 DEVICE_GATEWAY_APP_URL=http://127.0.0.1:3000
 ```
 
-Generate the secret:
-
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Then start some devices:
-
-```bash
-npm run simulate-device -- --name "Phone One" --type android_phone --code ABCD-EFGH
-```
-
-If the app starts with `AGI_COMMAND_ENABLED=true` and no internal secret, it
-refuses to boot and tells you exactly what to set. That is deliberate: a device
-control plane with no shared secret is worse than one that is switched off.
+If `DEVICE_GATEWAY_URL` is set without a secret, the app refuses to boot and
+tells you what to set. That is deliberate: a device control plane with an
+unauthenticated app↔gateway channel is worse than one that is switched off.
 
 ---
 
@@ -155,16 +190,29 @@ services:
 
 ## Hugging Face Spaces
 
-The current deployment target exposes **one** port, so a Space can host the app
-but not a second long-running gateway process. Options:
+A Space exposes one port and runs one long-lived container, which is exactly what
+embedded mode is for. The `Dockerfile` sets `AGI_COMMAND_ENABLED=true` and leaves
+`DEVICE_GATEWAY_URL` empty, so the gateway runs in-process and agents connect to:
 
-1. **Leave device control off in the Space** (`AGI_COMMAND_ENABLED=false`, the
-   default). Everything else works exactly as before, and the UI says device
-   control is unavailable.
-2. **Run the gateway elsewhere** — a small VPS, Fly.io, Railway — and point
-   `DEVICE_GATEWAY_URL` at it.
+```
+wss://<user>-<space>.hf.space/agent
+```
 
-Option 1 is the honest default and is what a fresh clone does.
+Set `GEMINI_API_KEY` and `JWT_SECRET` as Space secrets. Nothing else is needed —
+in particular there is no `DEVICE_GATEWAY_INTERNAL_SECRET`, because there is no
+app↔gateway network hop to authenticate.
+
+Storage is the container's local SQLite file. Space storage is ephemeral across
+rebuilds unless you attach persistent storage, so paired devices are lost when
+the Space restarts and have to be paired again.
+
+## Vercel
+
+Vercel functions cannot hold a WebSocket open and have no persistent disk, so
+**device control does not run there**. The app reports it as unavailable and
+ordinary chat is unaffected. To use devices with a Vercel front end you would
+need to run a standalone gateway elsewhere *and* implement the device
+repositories for Postgres, which are currently SQLite-only.
 
 ---
 

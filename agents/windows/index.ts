@@ -261,7 +261,7 @@ async function main(): Promise<void> {
         'Options:',
         '  --name <name>       device name (default: this computer\'s hostname)',
         '  --app <url>         AGI-v1 base URL (default http://127.0.0.1:3000)',
-        '  --gateway <url>     gateway WS URL (default ws://127.0.0.1:3100/agent)',
+        '  --gateway <url>     gateway WS URL (default ws://127.0.0.1:3000/agent, the app port)',
         '',
         `App allowlist: ${userAllowlistPath()}`,
       ].join('\n'),
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
     platformVersion: os.release(),
     agentVersion: AGENT_VERSION,
     appUrl: arg('app') ?? 'http://127.0.0.1:3000',
-    gatewayUrl: arg('gateway') ?? 'ws://127.0.0.1:3100/agent',
+    gatewayUrl: arg('gateway') ?? 'ws://127.0.0.1:3000/agent',
     handlers: buildWindowsHandlers(),
     // eslint-disable-next-line no-console
     log: (message) => console.log(`[${name}] ${message}`),

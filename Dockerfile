@@ -60,14 +60,21 @@ COPY --chown=node:node src/storage/migrations ./src/storage/migrations
 RUN mkdir -p /home/node/app/data
 
 # HF Spaces defaults — override GEMINI_API_KEY and JWT_SECRET via Space secrets.
+#
+# AGI Command is ON here, unlike the repository default. This image is a single
+# long-running container, so the device gateway runs in-process on the same port
+# (see src/gateway/embedded.ts): agents connect to wss://<host>/agent, and there
+# is no second service and no shared secret to configure.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=7860 \
     DATA_DIR=/home/node/app/data \
     LOG_LEVEL=info \
     LLM_BACKEND=gemini \
-    LLM_MODEL_ID=gemini-2.5-flash \
-    EMBED_MODEL_ID=Xenova/all-MiniLM-L6-v2
+    LLM_MODEL_ID=gemini-3-flash-preview \
+    EMBED_MODEL_ID=Xenova/all-MiniLM-L6-v2 \
+    AGI_COMMAND_ENABLED=true \
+    VOICE_BACKEND=browser
 
 EXPOSE 7860
 
