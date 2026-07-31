@@ -311,8 +311,9 @@ The integration tests create temporary data and remove it after the run. `.env.l
 - Capability PRs still require human review and protected-branch checks.
 - Automatic source self-improvements are bounded patch proposals, not an autonomous merge or deployment loop.
 - `LLM_BACKEND=scratch` is a placeholder; a scratch backend is not implemented.
-- AGI Command needs a separate long-running gateway process for device connections, so it cannot run entirely on Vercel. It is off by default.
-- The Android agent is written but has not been compiled or run against a device; see [docs/android-agent.md](./docs/android-agent.md).
+- AGI Command needs a separate long-running gateway process for device connections and the SQLite backend, so it does **not** run on the Vercel + Postgres deployment. It is off by default and reports itself unavailable there.
+- The Android agent is compiled in CI but has never been run on a real device; see [docs/android-agent.md](./docs/android-agent.md).
+- Do not regenerate `package-lock.json` on Windows. npm prunes optional dependencies that are not installable there (`@emnapi/*`), and CI's `npm ci` then rejects the tree as out of sync. Regenerate on Linux, in WSL, or in Docker.
 - The Windows agent deliberately does not advertise `media.play`/`media.pause` or volume control, because Windows exposes only toggles it cannot read back.
 - Device gateway notifications are in-process, so live UI updates assume a single app instance. Durable command state is shared, so other instances converge on reload.
 

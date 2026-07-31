@@ -10,10 +10,35 @@ also type — and vice versa.
 
 - **Push-to-talk only.** There is no always-listening mode, hidden or otherwise.
   You hold the microphone button, or click it once to start and again to stop.
-- **Nothing is recorded.** With the browser backend, recognition happens on the
-  device and only the resulting text leaves the page. No audio is stored, ever.
+- **AGI-v1 never receives or stores audio.** Only recognised text reaches
+  `/api/chat`, exactly as if it had been typed. No audio is written to disk or
+  sent to the server at any point.
 - **Text is never a second-class path.** If the microphone is unavailable or
   permission is refused, the UI says so plainly and typing keeps working.
+
+## Where your audio actually goes
+
+**No API key is required. That does not mean recognition is local.** The Web
+Speech API is free because the browser vendor absorbs the cost, not because the
+work happens on your machine:
+
+| Browser | What happens to the audio |
+|---|---|
+| Chrome / Edge | Streamed to **Google's** speech servers; text comes back. It leaves the machine. |
+| Safari | Sent to **Apple**, unless on-device dictation is installed for the language, in which case it may stay local. |
+| Firefox | `SpeechRecognition` is not implemented. Voice is unavailable and the microphone button is disabled. |
+
+So the honest statement is: *AGI-v1* never sees your audio, but in the most
+common browser your audio does leave the device — to the browser vendor, not to
+this application.
+
+If that is unacceptable for your use, set `VOICE_BACKEND=none` and type. A
+genuinely local option would need an on-device STT model (for example Whisper
+compiled to WASM) behind the same interface; the seam exists, the implementation
+does not.
+
+Text-to-speech (`speechSynthesis`) is normally local on all three browsers,
+using installed system voices.
 
 ---
 
@@ -69,8 +94,9 @@ with an explanation.
 ## Browser backend
 
 Uses `SpeechRecognition` (`webkitSpeechRecognition` on Chromium) and
-`speechSynthesis`. Both are built into the browser: no key, no server round trip,
-no cost.
+`speechSynthesis`. Both are built into the browser and need no API key — but see
+[Where your audio actually goes](#where-your-audio-actually-goes): recognition is
+generally a vendor round trip, not an on-device one.
 
 - `continuous = false` — one utterance per press. This is what makes
   push-to-talk real rather than cosmetic.
@@ -141,6 +167,9 @@ click.
 - No wake word, and none planned. Always-listening is the behaviour this design
   specifically avoids.
 - No speaker identification or voice biometrics.
-- No server-side audio storage. There is no audio to store.
+- No server-side audio storage. AGI-v1 never receives audio, so there is nothing
+  to store — but this is not the same as the audio never leaving your device.
+- No on-device speech recognition. The browser backend delegates to the browser
+  vendor; see the table above.
 - Hosted STT/TTS providers are stubs that report unavailable — the seam exists,
   the implementations do not.

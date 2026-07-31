@@ -2,12 +2,18 @@
 
 Kotlin. Source: [`agents/android/`](../agents/android)
 
-> **Status: written, not built.** This module is not compiled by `npm run build`
-> and has not been compiled or run against a device or emulator by the author of
-> this change — it needs the Android SDK and Gradle, which were not available.
-> Treat it as a reviewed starting point, not as verified software. The protocol
-> it speaks *is* covered by tests through the TypeScript agents, so the wire
-> format is known-good; the Android-specific code is not.
+> **Status: compiled in CI, never run on a device.**
+>
+> The `android agent` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+> runs `gradle assembleDebug` on every push and pull request, so this module is
+> genuinely compiled — a syntax error, a bad API call or a broken manifest fails
+> CI. It is *not* covered by `npm run build`.
+>
+> What is still unverified: **runtime behaviour**. Nobody has installed this on a
+> phone, paired it, or watched it reconnect. The wire protocol it speaks is
+> covered by tests through the TypeScript agents, so the frame format is
+> known-good; the Android-specific behaviour is not. Work through the checklist
+> at the end of this document before trusting it.
 
 ---
 
@@ -131,9 +137,8 @@ start or stop it.
 
 ## Before trusting it
 
-Because this module is unverified, check at minimum:
+CI proves it compiles. It does not prove it works. Check at minimum:
 
-- [ ] It compiles against your SDK
 - [ ] Pairing succeeds and the credential survives a restart
 - [ ] It reconnects after aeroplane mode on/off
 - [ ] A revoked device stops reconnecting instead of looping

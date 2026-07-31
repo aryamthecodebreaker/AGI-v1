@@ -24,3 +24,27 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  android-agent:
+    # The Android agent is Kotlin and is not covered by `npm run build`, so
+    # without this job nothing ever compiles it and it can rot unnoticed.
+    # GitHub's ubuntu runners ship the Android SDK, so this is a real build.
+    name: android agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile the agent
+        working-directory: agents/android
+        # assembleDebug, not a release build: this is a compile and
+        # resource-linking check, not a shippable artifact.
+        run: gradle --no-daemon assembleDebug
