@@ -220,6 +220,9 @@ unavailable.
   what had not.
 - **Confirmation** for wide fan-out, queued actions and workflow runs — bound to
   one exact action, single-use, expiring.
+- **Sees your screen when you show it.** Ask *"what's on my screen?"*, pick a
+  window in the browser's own share picker, and it answers. Always confirms
+  first; one frame; the image is never stored.
 - **Voice, two ways:** push-to-talk, or a hands-free **call mode** that listens,
   answers, speaks and listens again until you end it. No wake word, and AGI-v1
   never receives or stores audio. Voice works in ordinary chat — it does not

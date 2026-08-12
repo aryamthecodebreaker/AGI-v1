@@ -302,6 +302,34 @@ const DEFINITIONS: CapabilityDefinition[] = [
     queueable: false,
   },
   {
+    name: 'screen.read',
+    version: 1,
+    description:
+      'Look at a screen the user explicitly shares and answer a question about it. The browser shows a picker; the user chooses what is shared.',
+    input: z
+      .object({
+        question: z.string().min(1).max(500).default('What is on this screen?'),
+      })
+      .strict(),
+    output: z.object({ answer: z.string().optional() }).passthrough(),
+    // Browser only, and on purpose. The browser's getDisplayMedia() makes the
+    // operating system ask which window or screen to share, so consent is
+    // enforced by the platform rather than by this code. A silent OS-level
+    // screenshot would be a different and much worse feature — see
+    // docs/security-threat-model.md.
+    platforms: ['browser'],
+    // It can see anything on screen: passwords, private messages, other
+    // people's data. It always asks first, and no fan-out escalation can
+    // downgrade that.
+    risk: 'high',
+    requiresConfirmation: true,
+    timeoutMs: 60_000,
+    // Re-running means a second capture and a second share prompt.
+    retrySafe: false,
+    parallelSafe: false,
+    queueable: false,
+  },
+  {
     name: 'screen.wake',
     version: 1,
     description: 'Wake the screen where the platform permits it. Never unlocks the device.',
@@ -362,6 +390,10 @@ export const PROHIBITED_CAPABILITIES: readonly string[] = [
   'mic.record',
   'audio.record',
   'screen.record',
+  // Silent, OS-level screenshotting stays prohibited. `screen.read` is NOT this:
+  // it goes through the browser's getDisplayMedia(), so the operating system
+  // asks which window to share and the user picks. Consent enforced by the
+  // platform is the whole difference between the two.
   'screen.capture',
   'keylog.start',
   'input.inject',

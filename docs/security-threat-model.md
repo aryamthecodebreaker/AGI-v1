@@ -128,7 +128,8 @@ private network where possible.
 Not configurable, not behind a flag:
 
 - Unlocking a device, or bypassing a PIN, password, pattern or biometric.
-- Hidden recording of microphone, camera or screen.
+- **Hidden** recording of microphone, camera or screen. `screen.capture` and
+  `screen.record` — silent, OS-level grabs — remain prohibited outright.
 - Arbitrary shell, script or downloaded-code execution.
 - Credential or keychain extraction.
 - Privilege escalation, or disabling security software.
@@ -142,6 +143,36 @@ Enforced by `PROHIBITED_CAPABILITIES` in
 [`policy.ts`](../src/devices/policy.ts).
 
 ---
+
+## Reading the screen
+
+`screen.read` is the most invasive capability in the registry: whatever is on the
+shared screen — passwords, private messages, other people's data — goes to the
+model. It is allowed, and it is fenced:
+
+- **Browser only.** It goes through `getDisplayMedia()`, so the *operating
+  system* asks which window or screen to share and the user picks. Consent is
+  enforced by the platform, not by this code. That is the entire difference
+  between it and the still-prohibited `screen.capture`.
+- **Always asks.** Risk `high`, `requiresConfirmation: true`. A pre-confirmed
+  workflow run cannot wave it through — that suppresses escalation-driven
+  prompts only, never a capability that always asks.
+- **One frame.** The capture track is stopped immediately, so the sharing
+  indicator does not linger.
+- **Never stored.** The image is downscaled in the browser, held in memory for
+  exactly one model call, and dropped. It is not written to disk, not put in the
+  database, and never logged — the vision helper deliberately does not log
+  response bodies, because they echo the request.
+- **Not retried automatically.** `retrySafe: false`: a retry means another
+  capture and another share prompt.
+- The model is instructed to answer the question without repeating credentials
+  or private content back verbatim. That is a mitigation, not a guarantee —
+  share a window rather than a whole screen when it matters.
+
+An OS-level screenshot agent was the obvious implementation and was rejected
+twice over: it has no consent step, and in testing Windows Defender blocked the
+PowerShell that does it as malicious. The browser route is both safer and the
+one that actually works.
 
 ## Risk levels and confirmation
 
