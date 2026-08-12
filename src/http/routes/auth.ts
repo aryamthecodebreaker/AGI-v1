@@ -9,7 +9,11 @@ import { Errors } from '../../util/errors.js';
 
 const credsSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').max(40).regex(/^[a-zA-Z0-9_.-]+$/, 'Username can only contain letters, numbers, underscores, dots, and hyphens'),
-  password: z.string().min(10, 'Password must be at least 10 characters').max(200).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9])/, 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+  // Deliberately minimal: this is a demo-first app and the complexity rules were
+  // getting in the way of showing it. Passwords are still bcrypt-hashed and
+  // login is still rate-limited; only the composition requirement is gone.
+  // Tighten this before it holds anything that matters.
+  password: z.string().min(4, 'Password must be at least 4 characters').max(200),
   displayName: z.string().max(80).optional(),
 });
 

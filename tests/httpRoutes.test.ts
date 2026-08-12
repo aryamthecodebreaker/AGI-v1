@@ -68,7 +68,7 @@ describe.sequential('HTTP route integration', () => {
     const weak = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
-      payload: { username: 'alice', password: 'weak' },
+      payload: { username: 'alice', password: 'ab' },
     });
     expect(weak.statusCode).toBe(400);
 
@@ -260,7 +260,7 @@ describe.sequential('HTTP route integration', () => {
         method: 'POST',
         url: '/api/auth/register',
         remoteAddress: authAddress,
-        payload: { username: 'x', password: 'weak' },
+        payload: { username: 'x', password: 'ab' },
       });
       expect(response.statusCode).toBe(400);
     }
@@ -268,7 +268,7 @@ describe.sequential('HTTP route integration', () => {
       method: 'POST',
       url: '/api/auth/register',
       remoteAddress: authAddress,
-      payload: { username: 'x', password: 'weak' },
+      payload: { username: 'x', password: 'ab' },
     });
     expect(authLimited.statusCode).toBe(429);
     expect(authLimited.json()).toMatchObject({ error: 'RATE_LIMITED' });

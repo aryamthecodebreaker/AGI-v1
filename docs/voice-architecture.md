@@ -12,19 +12,52 @@ also type — and vice versa.
   whenever the browser supports speech, regardless of whether AGI Command is
   enabled. (It was briefly gated behind device control, which meant it never
   appeared on deployments with the feature switched off.)
-- **Nothing listens until you press a button.** There is no wake word and no
-  hidden always-listening mode. Two explicit ways in:
+- **Nothing listens until you switch it on.** Three ways in, in increasing order
+  of how long the microphone stays open:
   - **Push to talk** — hold the microphone, or click once to start and again to
     stop. One utterance per press.
   - **Call mode** — press *Call* for a hands-free conversation: listen → send →
-    speak → listen. It is visibly active the entire time (the button pulses),
-    and pressing *Call* again, or *Stop*, ends it. It also ends itself if the
-    microphone is refused or a turn fails, so it can never quietly loop.
+    speak → listen. Visibly active throughout (the button pulses); *Call* again
+    or *Stop* ends it, as does a refused microphone or a failed turn.
+  - **Wake word** — press the sensor button and say *"hey agi"*. See below;
+    this one is genuinely always-listening while enabled, and the UI says so.
+- **No hidden state.** Every mode that holds the microphone shows a pulsing
+  control, and *Stop* closes all of them at once.
 - **AGI-v1 never receives or stores audio.** Only recognised text reaches
   `/api/chat`, exactly as if it had been typed. No audio is written to disk or
   sent to the server at any point.
 - **Text is never a second-class path.** If the microphone is unavailable or
   permission is refused, the UI says so plainly and typing keeps working.
+
+## Wake word
+
+Press the sensor button and say **"hey agi"** (also `ok agi`, `agi v1`,
+`hey jarvis`). AGI-v1 then captures your next sentence as a command.
+
+Be clear about what this costs, because it is the one mode that keeps the
+microphone open:
+
+- **While it is on, the microphone is genuinely open and continuously
+  recognising.** That is the whole mechanism; there is no on-device
+  "keyword spotter" here that avoids streaming.
+- With the browser backend, that audio goes to the browser vendor's recogniser
+  (Google for Chrome and Edge) the entire time it is enabled — see the table
+  below. This is a materially bigger exposure than push-to-talk.
+- Nothing is stored anywhere, and nothing reaches AGI-v1 until the phrase is
+  matched. Only the command that follows is sent, as if typed.
+- Off by default. Enabled only by an explicit click, and the choice is
+  remembered — but restoring it still shows the pulsing indicator, and it is
+  never enabled silently on first load.
+- **Stop closes it**, along with call mode. One control that shuts the
+  microphone.
+
+Matching is deliberately loose (punctuation stripped, phrase matched anywhere in
+the heard text) so real speech triggers it, but phrase-based rather than
+word-based so "the **agi**le team" does not.
+
+If you want a wake word without streaming audio to a vendor, that needs an
+on-device keyword model (Porcupine, openWakeWord) behind this same interface.
+The seam exists; that implementation does not.
 
 ## Where your audio actually goes
 
@@ -174,8 +207,9 @@ click.
 
 ## What is not implemented
 
-- No wake word, and none planned. Call mode is hands-free but explicitly
-  started and visibly active; a wake word would be neither.
+- No *hidden* always-listening. The wake word is always-listening by definition,
+  but it is off by default, switched on only by an explicit click, visibly
+  pulsing while active, and closed by *Stop*.
 - No speaker identification or voice biometrics.
 - No server-side audio storage. AGI-v1 never receives audio, so there is nothing
   to store — but this is not the same as the audio never leaving your device.
