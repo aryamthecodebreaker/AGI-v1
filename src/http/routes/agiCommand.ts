@@ -11,6 +11,7 @@ import type { AgiCommand } from '../../devices/index.js';
 import { deviceEvents } from '../../devices/events.js';
 import { isDeviceOnline } from '../../storage/repositories/deviceRepo.js';
 import { PROTOCOL_VERSION } from '../../devices/protocol.js';
+import { describeImage } from '../../llm/vision.js';
 
 /**
  * Blocks device routes when the feature is switched off, with an explanation
@@ -150,6 +151,9 @@ export async function agiCommandRoutes(
         { capability: 'device.status', version: 1 },
         { capability: 'url.open', version: 1 },
         { capability: 'notification.show', version: 1 },
+        // Only the browser can do this: getDisplayMedia() makes the OS ask which
+        // window to share, so consent is enforced by the platform.
+        { capability: 'screen.read', version: 1 },
       ]);
 
       if (!existing) {
@@ -169,6 +173,71 @@ export async function agiCommandRoutes(
           .filter((c) => c.advertised && c.enabled)
           .map((c) => c.capability),
       };
+    },
+  );
+
+  /**
+   * A screen the user chose to share, for `screen.read`.
+   *
+   * The image arrives over HTTP rather than the device protocol because a
+   * screenshot is far larger than the 64 KB frame cap. It is held in memory for
+   * exactly one model call and never written to disk, never stored in the
+   * database, and never logged.
+   */
+  app.post(
+    '/api/agi-command/screen-read',
+    { preHandler: [auth, requireFeature(agi)] },
+    async (req, reply) => {
+      const body = screenReadSchema.parse(req.body);
+      const userId = req.user!.id;
+
+      const device = storage.devices.getOwned(userId, body.deviceId);
+      if (!device || device.deviceType !== 'browser') {
+        return reply.status(404).send({ error: 'NOT_FOUND', message: 'Unknown browser device' });
+      }
+
+      // The execution must belong to this user, this command and this device,
+      // and must still be open — the same checks the gateway path applies.
+      const execution = storage.executions.getById(body.executionId);
+      if (
+        !execution ||
+        execution.userId !== userId ||
+        execution.commandId !== body.commandId ||
+        execution.deviceId !== body.deviceId
+      ) {
+        return reply.status(404).send({ error: 'NOT_FOUND', message: 'Unknown execution' });
+      }
+      const command = storage.commands.getOwned(userId, body.commandId);
+      if (!command || command.capability !== 'screen.read') {
+        return reply.status(400).send({ error: 'BAD_REQUEST', message: 'Not a screen read' });
+      }
+
+      const question =
+        typeof command.parameters.question === 'string' && command.parameters.question.trim()
+          ? command.parameters.question
+          : 'What is on this screen?';
+
+      const vision = await describeImage({
+        base64: body.imageBase64,
+        mimeType: body.mimeType,
+        question,
+      });
+
+      // Resolve the execution here: the browser only captured and uploaded, the
+      // answer is produced server-side.
+      const outcome = agi.commands.ingestResult({
+        deviceId: body.deviceId,
+        commandId: body.commandId,
+        executionId: body.executionId,
+        type: vision.ok ? 'completed' : 'failed',
+        result: vision.ok ? { answer: vision.text } : undefined,
+        failure: vision.ok ? undefined : { code: 'failed', message: vision.error },
+      });
+
+      if (!vision.ok) {
+        return reply.status(200).send({ ok: false, error: vision.error });
+      }
+      return { ok: true, answer: vision.text, applied: outcome.accepted };
     },
   );
 
@@ -272,4 +341,13 @@ const browserResultSchema = z.object({
     })
     .optional(),
   progressMessage: z.string().max(200).optional(),
+});
+
+const screenReadSchema = z.object({
+  deviceId: z.string().min(1).max(64),
+  commandId: z.string().min(1).max(64),
+  executionId: z.string().min(1).max(64),
+  // ~4 MB of raw image at most; base64 is roughly 4/3 of that.
+  imageBase64: z.string().min(64).max(6_000_000),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
 });

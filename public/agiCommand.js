@@ -340,6 +340,88 @@ export function createCommandCentre({ api, orb, setState, showToast }) {
       }
       return { opened: true };
     },
+    /**
+     * Share one screen or window and let the assistant answer a question about
+     * it. getDisplayMedia() puts the operating system's own picker in front of
+     * the user, so they choose exactly what is shared and can cancel.
+     *
+     * One frame is grabbed, sent, and dropped. The capture track is stopped
+     * immediately — the share indicator must not linger after a single read.
+     */
+    'screen.read': async (parameters, event) => {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        throw new DeviceUnsupported('this browser cannot share a screen');
+      }
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 1 },
+          audio: false,
+        });
+      } catch (err) {
+        // Cancelling the picker is a normal, deliberate choice — not a fault.
+        throw new DeviceRejection(
+          err?.name === 'NotAllowedError'
+            ? 'you cancelled the screen share'
+            : `screen sharing failed: ${err?.message ?? 'unknown error'}`,
+        );
+      }
+
+      try {
+        const track = stream.getVideoTracks()[0];
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.muted = true;
+        await video.play();
+        // One frame is not always ready the instant play() resolves.
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        const settings = track.getSettings?.() ?? {};
+        const sourceWidth = settings.width || video.videoWidth || 1280;
+        const sourceHeight = settings.height || video.videoHeight || 720;
+        if (!sourceWidth || !sourceHeight) {
+          throw new Error('the shared screen produced no frame');
+        }
+
+        // Downscale: the model does not need native resolution, and a smaller
+        // image is a smaller upload and a smaller thing to hold in memory.
+        const maxWidth = 1280;
+        const scale = Math.min(1, maxWidth / sourceWidth);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(sourceWidth * scale);
+        canvas.height = Math.round(sourceHeight * scale);
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        video.pause();
+        video.srcObject = null;
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+        // Drop the pixels as soon as they are encoded.
+        canvas.width = 0;
+        canvas.height = 0;
+
+        const body = await api('/api/agi-command/screen-read', {
+          method: 'POST',
+          body: JSON.stringify({
+            deviceId: event.deviceId,
+            commandId: event.commandId,
+            executionId: event.executionId,
+            imageBase64,
+            mimeType: 'image/jpeg',
+          }),
+        });
+        if (!body.ok) throw new Error(body.error ?? 'the screen could not be read');
+
+        // The server already resolved this execution with the answer, so this
+        // handler must not report a second result.
+        return { __alreadyReported: true, answer: body.answer };
+      } finally {
+        // Always stop sharing, on every path.
+        for (const track of stream.getTracks()) track.stop();
+      }
+    },
+
     'notification.show': async (parameters) => {
       if (!('Notification' in window)) {
         throw new DeviceUnsupported('this browser cannot show notifications');
@@ -382,7 +464,11 @@ export function createCommandCentre({ api, orb, setState, showToast }) {
         });
         return;
       }
-      const result = await handler(event.parameters ?? {});
+      const result = await handler(event.parameters ?? {}, event);
+      // A handler that already resolved its own execution server-side (screen
+      // read) must not also report completion — the second result would be
+      // dropped as late, but sending it at all is misleading.
+      if (result?.__alreadyReported) return;
       await postBrowserResult(event, 'completed', { result });
     } catch (err) {
       const code =
