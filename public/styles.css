@@ -1452,3 +1452,15 @@ form input:focus, form textarea:focus {
   0%, 100% { box-shadow: 0 0 0 0 rgba(207, 106, 167, 0.45); }
   50% { box-shadow: 0 0 0 6px rgba(207, 106, 167, 0); }
 }
+
+/* Wake word: an open microphone must be unmistakable, not a subtle tint. */
+#wake-btn.active {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(231, 181, 93, 0.14);
+  animation: wake-pulse 2s ease-in-out infinite;
+}
+@keyframes wake-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 181, 93, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(231, 181, 93, 0); }
+}

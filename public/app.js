@@ -107,9 +107,10 @@ function syncAuthMode() {
   $('#password-help').classList.toggle('hidden', !registering);
   password.autocomplete = registering ? 'new-password' : 'current-password';
   if (registering) {
-    password.minLength = 10;
-    password.pattern = '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z0-9]).{10,200}$';
-    password.title = 'Use at least 10 characters with uppercase, lowercase, a number, and a symbol.';
+    // Kept in step with the server rule in src/http/routes/auth.ts.
+    password.minLength = 4;
+    password.removeAttribute('pattern');
+    password.title = 'At least 4 characters.';
   } else {
     password.removeAttribute('minlength');
     password.removeAttribute('pattern');
@@ -803,7 +804,13 @@ function initVoice(backendName = 'browser') {
       setAgiState('idle');
       // A refused microphone in call mode must not leave it looping.
       endCall();
+      syncWakeButton();
       showToast(message);
+    },
+    // Fired when the wake phrase is heard: capture the actual command next.
+    onWake: () => {
+      setAgiState('listening', 'Wake word heard — go ahead');
+      micControls?.begin();
     },
   });
 
@@ -856,12 +863,23 @@ function setupMic() {
   if (voice.sttAvailable) call.classList.remove('hidden');
   if (voice.ttsAvailable) stop.classList.remove('hidden');
 
+  const wake = $('#wake-btn');
+  if (wake && voice.wakeAvailable) {
+    wake.classList.remove('hidden');
+    wake.addEventListener('click', toggleWakeWord);
+    // Restore the user's previous choice, but never silently: enabling the wake
+    // word opens the microphone, so it is only restored if they turned it on.
+    if (localStorage.getItem(WAKE_STORAGE_KEY) === 'on') toggleWakeWord(true);
+  }
+
   let listening = false;
   const begin = () => {
     if (listening || mic.disabled) return;
     listening = true;
     mic.setAttribute('aria-pressed', 'true');
     mic.classList.add('active');
+    // Only one recogniser may hold the microphone at a time.
+    voice.pauseWake();
     voice.startListening();
   };
   const end = () => {
@@ -902,8 +920,10 @@ function setupMic() {
   stop.addEventListener('click', () => {
     voice.stopSpeaking();
     end();
-    // Stop means stop: it ends the call too, not just the current sentence.
+    // Stop means stop: it ends the call and the wake listener too, not just the
+    // current sentence. One obvious control that closes the microphone.
     endCall();
+    if (voice.isWakeActive()) toggleWakeWord(false);
     setAgiState('idle');
   });
 }
@@ -947,11 +967,57 @@ function endCall() {
 
 /** Called once a reply has finished being spoken. */
 function continueCall() {
-  if (!state.callMode) return;
-  // A short pause so the tail of the reply is not captured as user speech.
-  callResumeTimer = setTimeout(() => {
-    if (state.callMode) micControls?.begin();
-  }, 400);
+  if (state.callMode) {
+    // A short pause so the tail of the reply is not captured as user speech.
+    callResumeTimer = setTimeout(() => {
+      if (state.callMode) micControls?.begin();
+    }, 400);
+    return;
+  }
+  // Outside a call, hand the microphone back to the wake listener.
+  voice?.resumeWake();
+}
+
+// ---------------------------------------------------------------------------
+// Wake word
+//
+// Off by default and never enabled silently. While it is on the microphone is
+// genuinely open and continuously processing — that is the honest description,
+// and the button says so. Nothing is stored and nothing reaches AGI-v1 until
+// the phrase is heard, but the audio is going to the browser vendor's
+// recogniser the whole time. See docs/voice-architecture.md.
+// ---------------------------------------------------------------------------
+
+const WAKE_STORAGE_KEY = 'agi-v1.wakeWord';
+const WAKE_PHRASES = ['hey agi', 'ok agi', 'agi v1', 'hey jarvis'];
+
+function toggleWakeWord(forceOn) {
+  if (!voice?.wakeAvailable) {
+    showToast('This browser cannot do speech recognition, so there is no wake word.');
+    return;
+  }
+  const turningOn = forceOn === true ? true : !voice.isWakeActive();
+  const active = voice.setWakeWord(turningOn, WAKE_PHRASES);
+
+  localStorage.setItem(WAKE_STORAGE_KEY, active ? 'on' : 'off');
+  syncWakeButton();
+
+  if (active) {
+    showToast(`Wake word on — say "${WAKE_PHRASES[0]}". The microphone stays open until you turn this off.`);
+  } else if (forceOn !== true) {
+    showToast('Wake word off. The microphone is closed.');
+  }
+}
+
+function syncWakeButton() {
+  const wake = $('#wake-btn');
+  if (!wake || !voice) return;
+  const active = voice.isWakeActive();
+  wake.classList.toggle('active', active);
+  wake.setAttribute('aria-pressed', String(active));
+  wake.title = active
+    ? `Listening for "${WAKE_PHRASES[0]}". The microphone is open — click to stop.`
+    : 'Listen for a wake word. While this is on, the microphone stays open.';
 }
 
 syncAuthMode();

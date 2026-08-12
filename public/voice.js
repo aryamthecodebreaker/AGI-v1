@@ -39,13 +39,93 @@
  * @property {() => void} stopSpeaking
  */
 
-function createBrowserBackend({ onTranscript, onInterim, onState, onError }) {
+function createBrowserBackend({ onTranscript, onInterim, onState, onError, onWake }) {
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition || null;
   const synth = window.speechSynthesis ?? null;
 
   let recognition = null;
   let listening = false;
+
+  // ---- wake word ----
+  // A second, independent recognition instance that runs continuously and only
+  // reacts to the wake phrase. It is off unless the user switches it on, and
+  // while it is on the microphone genuinely IS open — see docs/voice-architecture.md.
+  let wakeRecognition = null;
+  let wakeActive = false;
+  let wakePhrases = [];
+  let wakeRestartTimer = null;
+
+  /** Loose match: strip punctuation and allow the phrase anywhere in the heard text. */
+  function heardWakePhrase(text) {
+    const normalised = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    return wakePhrases.some((phrase) => normalised.includes(phrase));
+  }
+
+  function buildWakeRecognition() {
+    const instance = new SpeechRecognition();
+    instance.lang = navigator.language || 'en-US';
+    // Continuous, because it has to keep hearing until the phrase arrives.
+    instance.continuous = true;
+    instance.interimResults = true;
+    instance.maxAlternatives = 1;
+
+    instance.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const heard = event.results[i][0].transcript;
+        if (heardWakePhrase(heard)) {
+          // Hand over to the command recogniser: stop listening for the wake
+          // phrase first so the two instances never compete for the microphone.
+          stopWakeRecognition();
+          onWake?.();
+          return;
+        }
+      }
+    };
+
+    // Continuous recognition still ends on its own (silence, browser limits),
+    // so it is restarted for as long as the user leaves it switched on.
+    instance.onend = () => {
+      if (!wakeActive) return;
+      wakeRestartTimer = setTimeout(() => {
+        if (wakeActive) startWakeRecognition();
+      }, 400);
+    };
+
+    instance.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        wakeActive = false;
+        onError?.('Microphone permission was refused, so the wake word is off.');
+        onState?.('idle');
+        return;
+      }
+      // 'no-speech' and 'aborted' are normal here; onend restarts it.
+    };
+
+    return instance;
+  }
+
+  function startWakeRecognition() {
+    if (!SpeechRecognition || !wakeActive) return;
+    try {
+      wakeRecognition = buildWakeRecognition();
+      wakeRecognition.start();
+    } catch {
+      // Already starting; onend will retry.
+    }
+  }
+
+  function stopWakeRecognition() {
+    clearTimeout(wakeRestartTimer);
+    if (!wakeRecognition) return;
+    try {
+      wakeRecognition.onend = null;
+      wakeRecognition.stop();
+    } catch {
+      /* already stopped */
+    }
+    wakeRecognition = null;
+  }
 
   function buildRecognition() {
     const instance = new SpeechRecognition();
@@ -160,6 +240,37 @@ function createBrowserBackend({ onTranscript, onInterim, onState, onError }) {
     stopSpeaking() {
       synth?.cancel();
     },
+
+    wakeAvailable: Boolean(SpeechRecognition),
+
+    /**
+     * Switch continuous wake-word listening on or off.
+     * While on, the microphone is genuinely open. Nothing is stored or sent
+     * anywhere until the phrase is heard, but the audio is being processed —
+     * by the browser vendor, not by AGI-v1.
+     */
+    setWakeWord(enabled, phrases) {
+      if (!SpeechRecognition) return false;
+      wakePhrases = (phrases ?? [])
+        .map((p) => p.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (enabled && wakePhrases.length === 0) return false;
+
+      wakeActive = Boolean(enabled);
+      if (wakeActive) startWakeRecognition();
+      else stopWakeRecognition();
+      return wakeActive;
+    },
+
+    isWakeActive: () => wakeActive,
+
+    /** Pause the wake listener while a command or reply is in flight. */
+    pauseWake() {
+      if (wakeActive) stopWakeRecognition();
+    },
+    resumeWake() {
+      if (wakeActive) startWakeRecognition();
+    },
   };
 }
 
@@ -177,12 +288,22 @@ function createHostedBackend(name, { onError }) {
   return {
     sttAvailable: false,
     ttsAvailable: false,
+    wakeAvailable: false,
     async startListening() {
       unavailable();
     },
     stopListening() {},
-    speak() {},
+    speak(_text, onDone) {
+      onDone?.();
+    },
     stopSpeaking() {},
+    setWakeWord() {
+      unavailable();
+      return false;
+    },
+    isWakeActive: () => false,
+    pauseWake() {},
+    resumeWake() {},
   };
 }
 
@@ -206,6 +327,16 @@ export function createVoice(options = {}) {
     get sttAvailable() {
       return backend.sttAvailable;
     },
+    get wakeAvailable() {
+      return backend.wakeAvailable === true;
+    },
+    /** Returns the resulting state, which is false if it could not be enabled. */
+    setWakeWord(enabled, phrases) {
+      return backend.setWakeWord?.(enabled, phrases) ?? false;
+    },
+    isWakeActive: () => backend.isWakeActive?.() ?? false,
+    pauseWake: () => backend.pauseWake?.(),
+    resumeWake: () => backend.resumeWake?.(),
     get ttsAvailable() {
       return backend.ttsAvailable;
     },

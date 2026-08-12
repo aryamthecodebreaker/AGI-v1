@@ -48,7 +48,7 @@
             <label for="password">Password
               <input id="password" type="password" autocomplete="current-password" required placeholder="Enter your password" />
             </label>
-            <p id="password-help" class="field-help hidden">Use at least 10 characters with uppercase, lowercase, a number, and a symbol.</p>
+            <p id="password-help" class="field-help hidden">At least 4 characters.</p>
             <button class="primary auth-submit" type="submit">
               <span class="submit-label">Log in</span>
               <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span>
@@ -199,6 +199,12 @@
                     aria-pressed="false" title="Start a hands-free voice conversation">
               <span class="material-symbols-rounded">call</span>
               <span class="sr-only">Start voice call</span>
+            </button>
+            <button id="wake-btn" class="icon-button voice-button hidden" type="button"
+                    aria-pressed="false"
+                    title="Listen for a wake word. While this is on, the microphone stays open.">
+              <span class="material-symbols-rounded">sensors</span>
+              <span class="sr-only">Toggle wake word</span>
             </button>
             <button id="stop-btn" class="icon-button voice-button hidden" type="button" title="Stop speaking">
               <span class="material-symbols-rounded">stop</span>
