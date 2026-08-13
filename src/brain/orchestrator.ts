@@ -32,6 +32,7 @@ import { buildPrompt } from './contextBuilder.js';
 import { resolveDirectMemoryRecall } from './directRecall.js';
 import type { AgiCommand } from '../devices/index.js';
 import { handleDeviceTurn } from './deviceTurn.js';
+import { buildDocumentFromBrief, detectDocumentRequest } from '../documents/service.js';
 
 export interface HandleUserMessageInput {
   userId: string;
@@ -224,6 +225,66 @@ export function createOrchestrator(
               sourceMessageId: assistantMsg.id,
               kind: 'raw_turn',
               content: `ASSISTANT: ${deviceResult.text}`,
+            });
+          }
+
+          yield { type: 'done' };
+          return;
+        }
+      }
+
+      // 2c. Document request. Same shape as the device turn: a deterministic
+      //     gate first, so ordinary conversation costs nothing extra, and any
+      //     failure falls through to normal chat rather than breaking the turn.
+      const documentKind = detectDocumentRequest(content);
+      if (documentKind) {
+        let reply: string | null = null;
+        try {
+          const built = await buildDocumentFromBrief({
+            llm,
+            userId,
+            kind: documentKind,
+            brief: content,
+          });
+          reply = built.ok && built.document
+            ? `I built **${built.document.filename}** for you.\n\n` +
+              `[Download it](/api/documents/${built.document.id})\n\n` +
+              `It is held in memory for 30 minutes and is not saved anywhere, so grab it now — ` +
+              `a server restart loses it.`
+            : `I could not build that ${documentKind}. ${built.error ?? ''}`.trim();
+        } catch (err) {
+          logger.error({ err }, 'document turn failed — falling back to normal chat');
+        }
+
+        if (reply) {
+          yield { type: 'meta', meta: { documentTurn: true, kind: documentKind } };
+          for (const chunk of chunkText(reply)) yield { type: 'token', data: chunk };
+
+          const assistantMsg = await storage.messages.insert({
+            conversationId,
+            userId,
+            role: 'assistant',
+            content: reply,
+          });
+          // Stored so the conversation reads correctly, but no fact extraction:
+          // "I made a deck" is not a durable fact about the user.
+          try {
+            const vec = await embed(reply);
+            await storage.memories.insert({
+              userId,
+              conversationId,
+              sourceMessageId: assistantMsg.id,
+              kind: 'raw_turn',
+              content: `ASSISTANT: ${reply}`,
+              embedding: vec,
+            });
+          } catch {
+            await storage.memories.insert({
+              userId,
+              conversationId,
+              sourceMessageId: assistantMsg.id,
+              kind: 'raw_turn',
+              content: `ASSISTANT: ${reply}`,
             });
           }
 

@@ -220,6 +220,12 @@ unavailable.
   what had not.
 - **Confirmation** for wide fan-out, queued actions and workflow runs — bound to
   one exact action, single-use, expiring.
+- **Makes real files.** *"Make me a presentation about solar power"* returns a
+  genuine `.pptx`; also `.docx` and `.xlsx`. The model fills in an outline
+  schema — titles, bullets, rows — and the server renders it. The model never
+  emits file bytes, markup or code, so a bad generation means silly slides, not
+  a dangerous file. Files live in memory for 30 minutes and are never written to
+  disk.
 - **Sees your screen when you show it.** Ask *"what's on my screen?"*, pick a
   window in the browser's own share picker, and it answers. Always confirms
   first; one frame; the image is never stored.

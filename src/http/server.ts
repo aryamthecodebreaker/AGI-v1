@@ -15,6 +15,7 @@ import { chatRoutes } from './routes/chat.js';
 import { memoryRoutes } from './routes/memories.js';
 import { peopleRoutes } from './routes/people.js';
 import { capabilityRoutes } from './routes/capabilities.js';
+import { documentRoutes } from './routes/documents.js';
 import { toHttpError } from '../util/errors.js';
 import { createAgiCommand, type AgiCommand } from '../devices/index.js';
 import { agiCommandRoutes } from './routes/agiCommand.js';
@@ -119,6 +120,7 @@ export async function buildServer(
   await memoryRoutes(app, storage);
   await peopleRoutes(app, storage);
   await capabilityRoutes(app, storage);
+  await documentRoutes(app, storage);
 
   // AGI Command.
   //
